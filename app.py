@@ -565,6 +565,27 @@ app_ui = ui.page_navbar(
                         style="font-size: 0.85rem; color: #ff9800; margin-top: 0.5rem;"
                     ),
                 ),
+                ui.hr(),
+                ui.div(
+                    ui.h5("⚙️ Advanced Settings", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.input_slider(
+                        "lrf_threshold",
+                        "Locally Rare Threshold (%):",
+                        min=1, max=20, value=5, step=1, post="%"
+                    ),
+                    ui.input_select(
+                        "concentration_percentile",
+                        "Concentration Percentile:",
+                        choices={"90": "90th", "95": "95th", "99": "99th"},
+                        selected="95"
+                    ),
+                    ui.input_select(
+                        "results_display_limit",
+                        "Results Display Limit:",
+                        choices={"10": "10 rows", "20": "20 rows", "50": "50 rows", "0": "All rows"},
+                        selected="20"
+                    ),
+                ),
                 width=380
             ),
             ui.div(
@@ -1684,7 +1705,7 @@ def server(input, output, session):
 
         return rescaled
 
-    def classify_features(df, user_classifications):
+    def classify_features(df, user_classifications, lrf_threshold=LOCALLY_RARE_THRESHOLD):
         """
         Classify features based on intrinsic properties (LRF, ROF) and user input.
         
@@ -1705,7 +1726,7 @@ def server(input, output, session):
             total_count = df[col].notna().sum()
             proportion = positive_count / total_count if total_count > 0 else 0
 
-            is_lrf = 1 if proportion > 0 and proportion <= LOCALLY_RARE_THRESHOLD else 0
+            is_lrf = 1 if proportion > 0 and proportion <= lrf_threshold else 0
             classifications['LRF'][col] = is_lrf
             classifications['ROF'][col] = 1 - is_lrf
 
@@ -1719,7 +1740,7 @@ def server(input, output, session):
 
         return classifications
 
-    def calculate_aq9_special(df, classifications):
+    def calculate_aq9_special(df, classifications, percentile=PERCENTILE_95):
         """
         Calculate AQ9 special 3-step concentration-weighted values
         Step 1: Normalize by mean
@@ -1754,8 +1775,8 @@ def server(input, output, session):
                 positive_values = values[values > 0]
                 if len(positive_values) > 0:
                     try:
-                        percentile_95 = np.percentile(positive_values, PERCENTILE_95)
-                        sum_top_5_percent = values[values >= percentile_95].sum()
+                        percentile_val = np.percentile(positive_values, percentile)
+                        sum_top_5_percent = values[values >= percentile_val].sum()
                         total_sum = values.sum()
 
                         # Y metric: percentage in top 5% (with division safety)
@@ -1900,15 +1921,19 @@ def server(input, output, session):
         if user_classifications is None:
             user_classifications = {}
 
+        # Get configurable threshold values from UI
+        lrf_threshold = input.lrf_threshold() / 100  # Convert from percentage to decimal
+        concentration_pct = int(input.concentration_percentile())
+
         # Step 1: Rescale data
         rescaled_qual = rescale_qualitative(df)
         rescaled_quant = rescale_quantitative(df)
 
         # Step 2: Classify features using data and user input
-        classifications = classify_features(df, user_classifications)
+        classifications = classify_features(df, user_classifications, lrf_threshold=lrf_threshold)
 
         # Step 3: Calculate AQ9 special rescaling
-        aq9_rescaled = calculate_aq9_special(df, classifications)
+        aq9_rescaled = calculate_aq9_special(df, classifications, percentile=concentration_pct)
 
         # Step 4: Calculate all AQs
         aq_results = calculate_all_aqs(df, data_type, rescaled_qual, rescaled_quant, aq9_rescaled, classifications)
@@ -2090,7 +2115,8 @@ def server(input, output, session):
         display_cols = ['Subzone ID'] + aq_cols
 
         # Create display dataframe
-        display_df = results[display_cols].head(RESULTS_DISPLAY_LIMIT).copy()
+        display_limit = int(input.results_display_limit())
+        display_df = results[display_cols].head(display_limit).copy() if display_limit > 0 else results[display_cols].copy()
 
         # Do NOT replace NaN values; keep them as NaN so we can display NA/empty in the table
         # display_df = display_df.fillna(0)
@@ -2235,7 +2261,8 @@ def server(input, output, session):
     def total_ev_table():
         results = calculate_results()
         if results is not None:
-            return results[['Subzone ID', 'EV']].head(RESULTS_DISPLAY_LIMIT)
+            display_limit = int(input.results_display_limit())
+            return results[['Subzone ID', 'EV']].head(display_limit) if display_limit > 0 else results[['Subzone ID', 'EV']]
         return pd.DataFrame()
     
     # Download results as Excel with multiple sheets and annotations
