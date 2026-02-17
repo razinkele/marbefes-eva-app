@@ -24,7 +24,7 @@ wheels/
 venv/
 ENV/
 env/
-.venv
+.venv/
 
 # IDE
 .vscode/
@@ -36,6 +36,7 @@ env/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Logs
 *.log
@@ -47,17 +48,50 @@ nohup.out
 *.bak
 *.backup
 
-# Data files (optional - uncomment if you don't want to track large datasets)
-# *.csv
-# *.xlsx
-# *.xls
-
-# Deployment package (if you want to exclude it)
-# deployment_package/
-
-# Encoded files
-*.txt
-!requirements.txt
-
 # Cache
 .cache/
+
+# Claude Code
+.claude/
+
+# Understand project
+*.und/
+
+# Output and result files
+*.xlsx
+*.png
+*.jpeg
+*.rds
+eva_results.csv
+Test dataset EC1 for EVAapp.csv
+Test dataset EC1 for EVAapp_repaired.csv
+sample_data_with_rare_features.csv
+
+# Reference documents
+*.docx
+
+# Project archive
+project_archive/
+
+# Deployment scripts
+deploy_to_laguna_razinka.sh
+manage_app.sh
+cleanup.sh
+marbefes-eva.service
+
+# Debug/test utility scripts
+debug_nan_issue.py
+test_nan_fix.py
+check_deployment_package.py
+validate_data.py
+
+# Legacy documentation
+ANALYSIS_SUMMARY.md
+DEPLOYMENT_CHECKLIST.md
+DEPLOYMENT_COMPLETE_SUMMARY.md
+DEPLOYMENT_RAZINKA.md
+DEPLOYMENT_README.md
+FIX_NAN_TABLES.md
+NaN_FIX_AND_EXCEL_EXPORT_SUMMARY.md
+NaN_FIX_COMPLETE_SOLUTION.md
+QUICK_DEPLOY_GUIDE.md
