@@ -752,6 +752,52 @@ A2, 1, 1, 0, ...""",
     ),
 
     ui.nav_panel(
+        "🗺️ Map",
+        ui.card(
+            ui.card_header("🗺️ Spatial Map Visualization"),
+            ui.layout_sidebar(
+                ui.sidebar(
+                    ui.h5("🎛️ Map Controls", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.input_select(
+                        "map_variable",
+                        "Display Variable:",
+                        choices=["EV", "AQ1", "AQ2", "AQ3", "AQ4", "AQ5", "AQ6", "AQ7",
+                                 "AQ8", "AQ9", "AQ10", "AQ11", "AQ12", "AQ13", "AQ14", "AQ15"]
+                    ),
+                    ui.input_select(
+                        "map_color_scheme",
+                        "Color Scheme:",
+                        choices=["YlOrRd", "Viridis", "Blues", "RdYlGn", "Plasma"]
+                    ),
+                    ui.input_select(
+                        "map_classification",
+                        "Classification:",
+                        choices=["Continuous", "EVA 5-class (VL/L/M/H/VH)"]
+                    ),
+                    ui.input_select(
+                        "map_basemap",
+                        "Basemap:",
+                        choices=["CartoDB Positron", "OpenStreetMap", "CartoDB Dark Matter"]
+                    ),
+                    ui.input_slider(
+                        "map_opacity",
+                        "Fill Opacity:",
+                        min=0.3,
+                        max=1.0,
+                        value=0.7,
+                        step=0.1
+                    ),
+                    width=280
+                ),
+                ui.div(
+                    ui.output_ui("map_output"),
+                    style="min-height: 600px;"
+                )
+            )
+        )
+    ),
+
+    ui.nav_panel(
         "📖 Method",
         ui.div(
             ui.div(
