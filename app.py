@@ -1428,8 +1428,8 @@ def server(input, output, session):
                         style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
                     ))
                 items.append(ui.div(
-                    ui.details(
-                        ui.summary("Show unmatched IDs"),
+                    ui.tags.details(
+                        ui.tags.summary("Show unmatched IDs"),
                         *unmatched_items
                     ),
                     style="margin-top: 0.5rem;"
@@ -1455,8 +1455,8 @@ def server(input, output, session):
                             style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
                         ))
                     items.append(ui.div(
-                        ui.details(
-                            ui.summary("Show unmatched IDs"),
+                        ui.tags.details(
+                            ui.tags.summary("Show unmatched IDs"),
                             *unmatched_items
                         ),
                         style="margin-top: 0.5rem;"
@@ -2192,8 +2192,8 @@ def server(input, output, session):
                     )
                 ),
                 ui.div(
-                    ui.details(
-                        ui.summary(ui.strong("ℹ️ How is EV calculated?")),
+                    ui.tags.details(
+                        ui.tags.summary(ui.strong("ℹ️ How is EV calculated?")),
                         ui.p("EV = MAX of all active AQ scores for each subzone. "
                              "Each AQ evaluates a different aspect of ecological value. "
                              "The highest-scoring AQ determines the EV for that subzone."),
