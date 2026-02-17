@@ -2748,21 +2748,82 @@ def server(input, output, session):
                         ws = writer.sheets[sheet_name]
                         ws.cell(row=1, column=1, value=f"Results for EC: {ec_name} ({ec['data_type']})")
 
-            # Format worksheets
+            # --- Professional Styling ---
             workbook = writer.book
 
-            # Format Summary sheet
-            summary_sheet = workbook['Summary & Metadata']
-            summary_sheet.column_dimensions['A'].width = 30
-            summary_sheet.column_dimensions['B'].width = 60
+            # Style constants
+            header_font = Font(bold=True, color="FFFFFF", size=11)
+            header_fill = PatternFill(start_color="006994", end_color="006994", fill_type="solid")
+            header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            thin_border = Border(
+                left=Side(style='thin', color='D0D0D0'),
+                right=Side(style='thin', color='D0D0D0'),
+                top=Side(style='thin', color='D0D0D0'),
+                bottom=Side(style='thin', color='D0D0D0')
+            )
+            alt_row_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
 
-            # Format methodology sheet
-            methodology_sheet = workbook['AQ Methodology']
-            methodology_sheet.column_dimensions['A'].width = 8
-            methodology_sheet.column_dimensions['B'].width = 45
-            methodology_sheet.column_dimensions['C'].width = 50
-            methodology_sheet.column_dimensions['D'].width = 15
-            methodology_sheet.column_dimensions['E'].width = 40
+            def style_worksheet(ws, has_data=True, freeze=True, autofilter=True, start_row=1):
+                """Apply professional styling to a worksheet."""
+                if ws.max_row < start_row or ws.max_column < 1:
+                    return
+
+                # Header row styling
+                for cell in ws[start_row]:
+                    cell.font = header_font
+                    cell.fill = header_fill
+                    cell.alignment = header_alignment
+                    cell.border = thin_border
+
+                if has_data and ws.max_row > start_row:
+                    # Autofilter
+                    if autofilter:
+                        ws.auto_filter.ref = f"A{start_row}:{get_column_letter(ws.max_column)}{ws.max_row}"
+
+                    # Freeze panes below header
+                    if freeze:
+                        ws.freeze_panes = f"A{start_row + 1}"
+
+                    # Data rows: borders + alternating fill
+                    for row_idx in range(start_row + 1, ws.max_row + 1):
+                        for cell in ws[row_idx]:
+                            cell.border = thin_border
+                            if (row_idx - start_row) % 2 == 0:
+                                cell.fill = alt_row_fill
+
+                # Auto-size columns (estimate from content)
+                for col_idx in range(1, ws.max_column + 1):
+                    max_len = 0
+                    col_letter = get_column_letter(col_idx)
+                    for row_idx in range(start_row, min(ws.max_row + 1, start_row + 50)):
+                        cell = ws.cell(row=row_idx, column=col_idx)
+                        if cell.value:
+                            max_len = max(max_len, len(str(cell.value)))
+                    ws.column_dimensions[col_letter].width = min(max(max_len + 3, 10), 60)
+
+            # Sheet tab colors
+            tab_colors = {
+                'Summary & Metadata': '006994',
+                'Original Data': '28A745',
+                'AQ & EV Results': 'FD7E14',
+                'Feature Classifications': '28A745',
+                'AQ Methodology': '6C757D',
+                'EV Calculation': '6C757D',
+                'Complete Results': 'FD7E14',
+            }
+
+            # Apply styling to all sheets
+            for sheet_name in workbook.sheetnames:
+                ws = workbook[sheet_name]
+                if sheet_name in tab_colors:
+                    ws.sheet_properties.tabColor = tab_colors[sheet_name]
+
+                # Multi-EC sheets have data starting at row 3 (title in row 1, header in row 3)
+                if sheet_name.startswith('EC - ') or sheet_name == 'Aggregated EV':
+                    ws.sheet_properties.tabColor = '6F42C1'
+                    style_worksheet(ws, start_row=3)
+                else:
+                    style_worksheet(ws)
 
         buffer.seek(0)
         return buffer
