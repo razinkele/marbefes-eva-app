@@ -2392,37 +2392,72 @@ def server(input, output, session):
     @output
     @render.ui
     def total_ev_ui():
+        store = ec_store.get()
+
+        # If multiple ECs saved, aggregate across them
+        if len(store) >= 2:
+            # Build aggregation DataFrame
+            ev_frames = {}
+            for ec_name, ec in store.items():
+                if ec['results'] is not None:
+                    ev_frames[ec_name] = ec['results'][['Subzone ID', 'EV']].rename(columns={'EV': ec_name})
+
+            if not ev_frames:
+                return ui.p("No ECs have computed results. Configure and save ECs first.")
+
+            # Merge all EV columns on Subzone ID
+            merged = None
+            for ec_name, df in ev_frames.items():
+                if merged is None:
+                    merged = df
+                else:
+                    merged = merged.merge(df, on='Subzone ID', how='outer')
+
+            # Fill NaN with 0 and compute Total EV
+            ec_names = list(ev_frames.keys())
+            merged[ec_names] = merged[ec_names].fillna(0)
+            merged['Total EV'] = merged[ec_names].sum(axis=1)
+
+            total_ev = merged['Total EV'].sum()
+            avg_ev = merged['Total EV'].mean()
+            max_ev = merged['Total EV'].max()
+            min_ev = merged['Total EV'].min()
+
+            return ui.TagList(
+                ui.card(
+                    ui.card_header(f"Aggregated Total EV ({len(ec_names)} ECs)"),
+                    ui.layout_column_wrap(
+                        ui.value_box("Total EV (Sum)", f"{total_ev:.2f}", theme="primary"),
+                        ui.value_box("Average Total EV", f"{avg_ev:.2f}", theme="info"),
+                        ui.value_box("Max Total EV", f"{max_ev:.2f}", theme="success"),
+                        ui.value_box("Min Total EV", f"{min_ev:.2f}", theme="warning"),
+                        width=1/4
+                    )
+                ),
+                ui.hr(),
+                ui.h5("Per-EC Summary"),
+                ui.output_table("ec_summary_table"),
+                ui.hr(),
+                ui.h5("Aggregated EV by Subzone"),
+                ui.output_table("total_ev_table")
+            )
+
+        # Single EC or no ECs: use existing behavior
         results = calculate_results()
         if results is not None:
             total_ev = results['EV'].sum()
             avg_ev = results['EV'].mean()
             max_ev = results['EV'].max()
             min_ev = results['EV'].min()
-            
+
             return ui.TagList(
                 ui.card(
                     ui.card_header("Summary Statistics"),
                     ui.layout_column_wrap(
-                        ui.value_box(
-                            "Total EV",
-                            f"{total_ev:.2f}",
-                            theme="primary"
-                        ),
-                        ui.value_box(
-                            "Average EV",
-                            f"{avg_ev:.2f}",
-                            theme="info"
-                        ),
-                        ui.value_box(
-                            "Max EV",
-                            f"{max_ev:.2f}",
-                            theme="success"
-                        ),
-                        ui.value_box(
-                            "Min EV",
-                            f"{min_ev:.2f}",
-                            theme="warning"
-                        ),
+                        ui.value_box("Total EV", f"{total_ev:.2f}", theme="primary"),
+                        ui.value_box("Average EV", f"{avg_ev:.2f}", theme="info"),
+                        ui.value_box("Max EV", f"{max_ev:.2f}", theme="success"),
+                        ui.value_box("Min EV", f"{min_ev:.2f}", theme="warning"),
                         width=1/4
                     )
                 ),
@@ -2435,12 +2470,56 @@ def server(input, output, session):
     @output
     @render.table
     def total_ev_table():
+        store = ec_store.get()
+        display_limit = int(input.results_display_limit())
+
+        if len(store) >= 2:
+            ev_frames = {}
+            for ec_name, ec in store.items():
+                if ec['results'] is not None:
+                    ev_frames[ec_name] = ec['results'][['Subzone ID', 'EV']].rename(columns={'EV': ec_name})
+
+            if not ev_frames:
+                return pd.DataFrame()
+
+            merged = None
+            for ec_name, df in ev_frames.items():
+                if merged is None:
+                    merged = df
+                else:
+                    merged = merged.merge(df, on='Subzone ID', how='outer')
+
+            ec_names = list(ev_frames.keys())
+            merged[ec_names] = merged[ec_names].fillna(0)
+            merged['Total EV'] = merged[ec_names].sum(axis=1)
+            merged = merged.sort_values('Total EV', ascending=False)
+
+            return merged.head(display_limit) if display_limit > 0 else merged
+
         results = calculate_results()
         if results is not None:
-            display_limit = int(input.results_display_limit())
-            return results[['Subzone ID', 'EV']].head(display_limit) if display_limit > 0 else results[['Subzone ID', 'EV']]
+            df = results[['Subzone ID', 'EV']]
+            return df.head(display_limit) if display_limit > 0 else df
         return pd.DataFrame()
-    
+
+    @output
+    @render.table
+    def ec_summary_table():
+        store = ec_store.get()
+        if len(store) < 2:
+            return pd.DataFrame()
+
+        rows = []
+        for ec_name, ec in store.items():
+            mean_ev = ec['results']['EV'].mean() if ec['results'] is not None else 0
+            rows.append({
+                'EC Name': ec_name,
+                'Data Type': ec['data_type'],
+                'Features': ec['feature_count'],
+                'Mean EV': round(mean_ev, 2)
+            })
+        return pd.DataFrame(rows)
+
     # Download results as Excel with multiple sheets and annotations
     @render.download(filename=lambda: f"MARBEFES_EVA_Results_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
     def download_results():
