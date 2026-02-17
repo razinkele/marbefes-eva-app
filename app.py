@@ -803,6 +803,16 @@ A2, 1, 1, 0, ...""",
                         "Color Scheme:",
                         choices=["Viridis", "Plasma", "Blues", "Greens"]
                     ),
+                    ui.panel_conditional(
+                        "input.plot_type === 'AQ Radar Comparison'",
+                        ui.input_selectize(
+                            "radar_subzones",
+                            "Select Subzones to Compare (max 5):",
+                            choices=[],
+                            multiple=True,
+                            options={"maxItems": 5, "placeholder": "Upload data first..."}
+                        )
+                    ),
                     width=280
                 ),
                 ui.div(
@@ -2620,6 +2630,18 @@ def server(input, output, session):
         buffer.seek(0)
         return buffer
     
+    @reactive.Effect
+    @reactive.event(uploaded_data)
+    def _update_radar_choices():
+        df = uploaded_data.get()
+        if df is not None and 'Subzone ID' in df.columns:
+            subzone_ids = df['Subzone ID'].tolist()
+            ui.update_selectize(
+                "radar_subzones",
+                choices=subzone_ids,
+                selected=subzone_ids[:3]
+            )
+
     # Visualization
     @output
     @render.ui
@@ -2745,6 +2767,59 @@ def server(input, output, session):
             )
 
             return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="aq_breakdown_plot"))
+
+        elif plot_type == "AQ Radar Comparison":
+            # Radar chart comparing AQ profiles across selected subzones
+            selected = list(input.radar_subzones()) if input.radar_subzones() else []
+            if not selected:
+                return ui.div(
+                    ui.p("👈 Select 1-5 subzones from the sidebar to compare their AQ profiles.",
+                         style="font-size: 1.1rem; text-align: center; color: #6c757d; padding: 2rem;")
+                )
+
+            aq_columns = [col for col in results.columns if col.startswith('AQ')]
+            if not aq_columns:
+                return ui.p("No AQ scores available")
+
+            fig = go.Figure()
+
+            line_colors = px.colors.qualitative.Plotly
+            fill_colors = [
+                'rgba(99,110,250,0.15)', 'rgba(239,85,59,0.15)', 'rgba(0,204,150,0.15)',
+                'rgba(171,99,250,0.15)', 'rgba(255,161,90,0.15)'
+            ]
+
+            for i, subzone in enumerate(selected):
+                row = results[results['Subzone ID'] == subzone]
+                if row.empty:
+                    continue
+                values = row[aq_columns].values.flatten().tolist()
+                values.append(values[0])  # Close the polygon
+                categories = aq_columns + [aq_columns[0]]
+
+                fig.add_trace(go.Scatterpolar(
+                    r=values,
+                    theta=categories,
+                    fill='toself',
+                    fillcolor=fill_colors[i % len(fill_colors)],
+                    name=str(subzone),
+                    line=dict(color=line_colors[i % len(line_colors)], width=2),
+                    hovertemplate='%{theta}: %{r:.2f}<extra>' + str(subzone) + '</extra>'
+                ))
+
+            fig.update_layout(
+                polar=dict(
+                    radialaxis=dict(visible=True, range=[0, 5]),
+                    angularaxis=dict(direction="clockwise")
+                ),
+                title="AQ Profile Comparison by Subzone",
+                height=600,
+                showlegend=True,
+                legend=dict(orientation='h', yanchor='bottom', y=-0.15, xanchor='center', x=0.5),
+                paper_bgcolor='rgba(0,0,0,0)'
+            )
+
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="radar_plot"))
 
         else:  # AQ Scores
             # Create AQ scores histogram
