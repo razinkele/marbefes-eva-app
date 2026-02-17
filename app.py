@@ -549,18 +549,19 @@ app_ui = ui.page_navbar(
                 ui.div(
                     ui.h5("🗺️ Upload Spatial Grid", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
                     ui.p(
-                        "Optional: Upload a GeoJSON file with your hexagonal grid to enable map visualization.",
+                        "Optional: Upload a spatial grid file to enable map visualization.",
                         style="font-size: 0.9rem; color: #6c757d; line-height: 1.6;"
                     ),
                     ui.input_file(
                         "upload_geojson",
-                        "Choose GeoJSON File",
-                        accept=[".geojson", ".json"],
+                        "Choose Spatial File",
+                        accept=[".geojson", ".json", ".zip", ".gpkg"],
                         multiple=False,
                         button_label="Browse...",
                     ),
                     ui.p(
-                        "Each feature must have a 'Subzone ID' property matching the CSV data.",
+                        "Supported: GeoJSON, Zipped Shapefile (.zip), GeoPackage (.gpkg). "
+                        "Each feature must have a 'Subzone ID' attribute matching the CSV data.",
                         style="font-size: 0.85rem; color: #ff9800; margin-top: 0.5rem;"
                     ),
                 ),
@@ -1162,7 +1163,7 @@ def server(input, output, session):
             # Update the input selector to the detected type
             ui.update_select("data_type", selected=auto_detected_type)
 
-    # Handle GeoJSON upload
+    # Handle spatial file upload (GeoJSON, Shapefile ZIP, GeoPackage)
     @reactive.Effect
     @reactive.event(input.upload_geojson)
     def handle_geojson_upload():
@@ -1171,12 +1172,18 @@ def server(input, output, session):
             return
 
         file_path = file_info[0]["datapath"]
+        file_name = file_info[0]["name"].lower()
 
         try:
-            gdf = gpd.read_file(file_path)
+            if file_name.endswith('.zip'):
+                # Zipped shapefile - read via zip:// protocol
+                gdf = gpd.read_file(f"zip://{file_path}")
+            else:
+                # GeoJSON, GeoPackage, or other formats geopandas supports
+                gdf = gpd.read_file(file_path)
         except Exception as e:
             geo_data.set(None)
-            logger.error(f"Could not read GeoJSON file: {e}")
+            logger.error(f"Could not read spatial file: {e}")
             return
 
         # Store original CRS
