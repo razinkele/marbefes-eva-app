@@ -2825,6 +2825,49 @@ def server(input, output, session):
                 else:
                     style_worksheet(ws)
 
+            # Conditional formatting: color scale on EV columns
+            ev_color_rule = ColorScaleRule(
+                start_type='num', start_value=0, start_color='F8696B',
+                mid_type='num', mid_value=2.5, mid_color='FFEB84',
+                end_type='num', end_value=5, end_color='63BE7B'
+            )
+
+            ev_sheets = ['AQ & EV Results', 'Complete Results']
+            if 'Aggregated EV' in workbook.sheetnames:
+                ev_sheets.append('Aggregated EV')
+
+            for sheet_name in ev_sheets:
+                if sheet_name not in workbook.sheetnames:
+                    continue
+                ws = workbook[sheet_name]
+                start_row = 3 if sheet_name == 'Aggregated EV' else 1
+
+                for col_idx in range(1, ws.max_column + 1):
+                    header_cell = ws.cell(row=start_row, column=col_idx)
+                    if header_cell.value and ('EV' in str(header_cell.value)):
+                        col_letter = get_column_letter(col_idx)
+                        data_range = f"{col_letter}{start_row + 1}:{col_letter}{ws.max_row}"
+                        ws.conditional_formatting.add(data_range, ColorScaleRule(
+                            start_type='num', start_value=0, start_color='F8696B',
+                            mid_type='num', mid_value=2.5, mid_color='FFEB84',
+                            end_type='num', end_value=5, end_color='63BE7B'
+                        ))
+
+                        for row_idx in range(start_row + 1, ws.max_row + 1):
+                            cell = ws.cell(row=row_idx, column=col_idx)
+                            cell.number_format = '0.00'
+
+            # Format AQ columns as 2 decimal places
+            for sheet_name in ['AQ & EV Results', 'Complete Results']:
+                if sheet_name not in workbook.sheetnames:
+                    continue
+                ws = workbook[sheet_name]
+                for col_idx in range(1, ws.max_column + 1):
+                    header_cell = ws.cell(row=1, column=col_idx)
+                    if header_cell.value and str(header_cell.value).startswith('AQ'):
+                        for row_idx in range(2, ws.max_row + 1):
+                            ws.cell(row=row_idx, column=col_idx).number_format = '0.00'
+
         buffer.seek(0)
         return buffer
     
