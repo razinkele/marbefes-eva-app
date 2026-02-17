@@ -2045,6 +2045,40 @@ def server(input, output, session):
             logger.debug(f"aq_results shape: {aq_results.shape if aq_results is not None else 'None'}")
             return None
 
+    def get_aq_status(data_type, classifications, results):
+        """Analyze each AQ and return status with explanation."""
+        qual_aqs = ['AQ1', 'AQ3', 'AQ5', 'AQ7', 'AQ10', 'AQ12', 'AQ14']
+        quant_aqs = ['AQ2', 'AQ4', 'AQ6', 'AQ8', 'AQ9', 'AQ11', 'AQ13', 'AQ15']
+
+        has_rrf = any('RRF' in (cls if isinstance(cls, list) else [cls]) for cls in classifications.values())
+        has_nrf = any('NRF' in (cls if isinstance(cls, list) else [cls]) for cls in classifications.values())
+        has_esf = any('ESF' in (cls if isinstance(cls, list) else [cls]) for cls in classifications.values())
+        has_hfs = any('HFS_BH' in (cls if isinstance(cls, list) else [cls]) for cls in classifications.values())
+        has_ss = any('SS' in (cls if isinstance(cls, list) else [cls]) for cls in classifications.values())
+
+        statuses = {}
+        for aq in qual_aqs + quant_aqs:
+            aq_num = int(aq[2:])
+
+            if data_type == 'qualitative' and aq in quant_aqs:
+                statuses[aq] = ('inactive', 'Quantitative data required')
+            elif data_type == 'quantitative' and aq in qual_aqs:
+                statuses[aq] = ('inactive', 'Qualitative data required')
+            elif aq_num in [5, 6] and not has_rrf:
+                statuses[aq] = ('inactive', 'No features classified as RRF')
+            elif aq_num in [7, 8] and not has_nrf:
+                statuses[aq] = ('inactive', 'No features classified as NRF')
+            elif aq_num in [10, 11] and not has_esf:
+                statuses[aq] = ('inactive', 'No features classified as ESF')
+            elif aq_num in [12, 13] and not has_hfs:
+                statuses[aq] = ('inactive', 'No features classified as HFS/BH')
+            elif aq_num in [14, 15] and not has_ss:
+                statuses[aq] = ('inactive', 'No features classified as SS')
+            else:
+                statuses[aq] = ('active', 'Active')
+
+        return statuses
+
     # Results UI
     @output
     @render.ui
@@ -2112,10 +2146,25 @@ def server(input, output, session):
             )
 
         if results is not None:
-            # Analyze which AQs have values
-            aq_cols = [col for col in results.columns if col.startswith('AQ')]
-            non_nan_aqs = [col for col in aq_cols if not results[col].isna().all()]
-            all_nan_aqs = [col for col in aq_cols if results[col].isna().all()]
+            # Get AQ statuses with explanations
+            user_classifications = feature_classifications.get() or {}
+            aq_statuses = get_aq_status(data_type, user_classifications, results)
+
+            active_badges = []
+            inactive_badges = []
+            for aq, (status, reason) in sorted(aq_statuses.items(), key=lambda x: int(x[0][2:])):
+                if status == 'active':
+                    active_badges.append(ui.span(
+                        aq,
+                        style="display: inline-block; padding: 4px 10px; margin: 2px; border-radius: 12px; "
+                        "background: #28a745; color: white; font-size: 0.85rem; font-weight: 600;"
+                    ))
+                else:
+                    inactive_badges.append(ui.span(
+                        f"{aq}: {reason}",
+                        style="display: inline-block; padding: 4px 10px; margin: 2px; border-radius: 12px; "
+                        "background: #e0e0e0; color: #666; font-size: 0.8rem;"
+                    ))
 
             return ui.TagList(
                 ui.div(
@@ -2130,16 +2179,24 @@ def server(input, output, session):
                             ui.strong(f"Data Type: {data_type.upper()}"),
                             style="font-size: 1.1rem; color: #2196F3; margin-bottom: 0.5rem;"
                         ),
-                        ui.p(
-                            f"✅ Active AQs ({len(non_nan_aqs)}): {', '.join(non_nan_aqs) if non_nan_aqs else 'None'}",
-                            style="color: #28a745; margin: 0.5rem 0;"
-                        ),
-                        ui.p(
-                            f"⚠️ Inactive AQs ({len(all_nan_aqs)}): {', '.join(all_nan_aqs) if all_nan_aqs else 'None'}",
-                            style="color: #ff9800; margin: 0.5rem 0;"
-                        ),
+                        ui.p("Active AQs:", style="font-weight: 600; color: #28a745; margin-bottom: 0.3rem;"),
+                        ui.div(*active_badges, style="margin-bottom: 0.8rem;") if active_badges else ui.p("None", style="color: #999;"),
+                        ui.p("Inactive AQs:", style="font-weight: 600; color: #999; margin-bottom: 0.3rem;"),
+                        ui.div(*inactive_badges) if inactive_badges else ui.p("None — all AQs are active!", style="color: #28a745;"),
                         style="padding: 1rem; background: linear-gradient(135deg, #e3f2fd 0%, #f1f8e9 100%); border-radius: 8px; margin-bottom: 1.5rem;"
                     )
+                ),
+                ui.div(
+                    ui.details(
+                        ui.summary(ui.strong("ℹ️ How is EV calculated?")),
+                        ui.p("EV = MAX of all active AQ scores for each subzone. "
+                             "Each AQ evaluates a different aspect of ecological value. "
+                             "The highest-scoring AQ determines the EV for that subzone."),
+                        ui.p(f"Active AQs for your data: {', '.join(aq for aq, (s, _) in sorted(aq_statuses.items(), key=lambda x: int(x[0][2:])) if s == 'active')}"),
+                        ui.p("To activate more AQs, classify features in the EC Features tab "
+                             "(e.g., mark features as RRF to enable AQ5/AQ6)."),
+                    ),
+                    style="margin-bottom: 1.5rem; padding: 1rem; background: #f5f5f5; border-radius: 8px;"
                 ),
                 ui.hr(),
                 ui.h5("📊 Results Table", style="color: #006994; font-weight: 600; margin: 1.5rem 0 1rem 0;"),
