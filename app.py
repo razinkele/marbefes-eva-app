@@ -2748,6 +2748,107 @@ def server(input, output, session):
                         ws = writer.sheets[sheet_name]
                         ws.cell(row=1, column=1, value=f"Results for EC: {ec_name} ({ec['data_type']})")
 
+            # --- Embedded Chart Sheets ---
+            try:
+                chart_workbook = writer.book
+
+                # Chart 1: EV by Subzone bar chart
+                store_charts = ec_store.get()
+                if len(store_charts) >= 2:
+                    ev_frames = {}
+                    for ec_nm, ec_data in store_charts.items():
+                        if ec_data['results'] is not None:
+                            ev_frames[ec_nm] = ec_data['results'][['Subzone ID', 'EV']].rename(columns={'EV': ec_nm})
+                    if ev_frames:
+                        merged_chart = None
+                        for ec_nm, df_ev in ev_frames.items():
+                            if merged_chart is None:
+                                merged_chart = df_ev
+                            else:
+                                merged_chart = merged_chart.merge(df_ev, on='Subzone ID', how='outer')
+                        ec_nm_list = list(ev_frames.keys())
+                        merged_chart[ec_nm_list] = merged_chart[ec_nm_list].fillna(0)
+                        merged_chart['Total EV'] = merged_chart[ec_nm_list].sum(axis=1)
+                        chart_ev_x = merged_chart['Subzone ID']
+                        chart_ev_y = merged_chart['Total EV']
+                        chart_ev_title = "Total EV by Subzone (Aggregated)"
+                    else:
+                        chart_ev_x = results['Subzone ID']
+                        chart_ev_y = results['EV']
+                        chart_ev_title = "EV by Subzone"
+                else:
+                    chart_ev_x = results['Subzone ID']
+                    chart_ev_y = results['EV']
+                    chart_ev_title = "EV by Subzone"
+
+                fig_ev = go.Figure(data=[go.Bar(
+                    x=chart_ev_x, y=chart_ev_y,
+                    marker=dict(color=chart_ev_y.tolist(), colorscale='Viridis', showscale=True)
+                )])
+                fig_ev.update_layout(
+                    title=chart_ev_title, xaxis_title="Subzone ID", yaxis_title="EV Score",
+                    height=500, width=800, plot_bgcolor='rgba(0,0,0,0)'
+                )
+                ev_img_bytes = pio.to_image(fig_ev, format='png', width=800, height=500, scale=2)
+                ev_img_stream = io.BytesIO(ev_img_bytes)
+                ws_chart1 = chart_workbook.create_sheet('Chart - EV by Subzone')
+                ws_chart1.sheet_properties.tabColor = 'FD7E14'
+                img1 = XlImage(ev_img_stream)
+                img1.width = 800
+                img1.height = 500
+                ws_chart1.add_image(img1, 'A1')
+
+                # Chart 2: AQ Heatmap
+                aq_columns = [col for col in results.columns if col.startswith('AQ')]
+                if aq_columns:
+                    display_cols = aq_columns + ['EV']
+                    sorted_res = results.sort_values('EV', ascending=True)
+                    z_data = sorted_res[display_cols].fillna(0).values
+
+                    fig_heatmap = go.Figure(data=go.Heatmap(
+                        z=z_data, x=display_cols, y=sorted_res['Subzone ID'].tolist(),
+                        colorscale='Viridis', zmin=0, zmax=5,
+                        text=np.round(z_data, 1), texttemplate="%{text}",
+                        textfont={"size": 9}, colorbar=dict(title="Score")
+                    ))
+                    fig_heatmap.update_layout(
+                        title="AQ Scores x Subzones (sorted by EV)",
+                        xaxis_title="Assessment Questions", yaxis_title="Subzone ID",
+                        height=max(450, len(sorted_res) * 25), width=800,
+                        plot_bgcolor='rgba(0,0,0,0)'
+                    )
+                    hm_height = max(450, len(sorted_res) * 25)
+                    hm_img_bytes = pio.to_image(fig_heatmap, format='png', width=800, height=hm_height, scale=2)
+                    hm_img_stream = io.BytesIO(hm_img_bytes)
+                    ws_chart2 = chart_workbook.create_sheet('Chart - AQ Heatmap')
+                    ws_chart2.sheet_properties.tabColor = 'FD7E14'
+                    img2 = XlImage(hm_img_stream)
+                    img2.width = 800
+                    img2.height = hm_height
+                    ws_chart2.add_image(img2, 'A1')
+
+                # Chart 3: EV Distribution histogram
+                fig_hist = go.Figure(data=[go.Histogram(
+                    x=results['EV'], nbinsx=20,
+                    marker=dict(color='#006994', line=dict(color='white', width=1))
+                )])
+                fig_hist.update_layout(
+                    title="EV Score Distribution", xaxis_title="EV Score", yaxis_title="Count",
+                    height=500, width=800, plot_bgcolor='rgba(0,0,0,0)',
+                    bargap=0.05
+                )
+                hist_img_bytes = pio.to_image(fig_hist, format='png', width=800, height=500, scale=2)
+                hist_img_stream = io.BytesIO(hist_img_bytes)
+                ws_chart3 = chart_workbook.create_sheet('Chart - EV Distribution')
+                ws_chart3.sheet_properties.tabColor = 'FD7E14'
+                img3 = XlImage(hist_img_stream)
+                img3.width = 800
+                img3.height = 500
+                ws_chart3.add_image(img3, 'A1')
+
+            except Exception as e:
+                logging.warning(f"Chart generation failed: {e}")
+
             # --- Professional Styling ---
             workbook = writer.book
 
