@@ -22,6 +22,11 @@ import folium
 import folium.plugins
 import branca.colormap as cm
 import json
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, numbers
+from openpyxl.utils import get_column_letter
+from openpyxl.formatting.rule import ColorScaleRule
+from openpyxl.drawing.image import Image as XlImage
+import plotly.io as pio
 
 # Configure logging
 logging.basicConfig(
