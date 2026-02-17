@@ -543,6 +543,23 @@ app_ui = ui.page_navbar(
         ui.layout_sidebar(
             ui.sidebar(
                 ui.div(
+                    ui.h5("🗂️ EC Management", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.input_select(
+                        "select_ec",
+                        "Saved ECs:",
+                        choices=[],
+                        width="100%"
+                    ),
+                    ui.div(
+                        ui.input_action_button("save_ec", "💾 Save Current EC", class_="btn-primary btn-sm", style="margin-right: 0.3rem;"),
+                        ui.input_action_button("new_ec", "➕ New EC", class_="btn-outline-secondary btn-sm", style="margin-right: 0.3rem;"),
+                        ui.input_action_button("delete_ec", "🗑️ Delete", class_="btn-outline-danger btn-sm"),
+                        style="display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem;"
+                    ),
+                    ui.output_ui("ec_list_summary"),
+                ),
+                ui.hr(),
+                ui.div(
                     ui.h5("📝 Metadata", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
                     ui.input_text(
                         "ec_name", 
@@ -2709,6 +2726,36 @@ def server(input, output, session):
             ui.notification_show(f"EC '{ec_name}' removed.", type="message")
             # Update the select dropdown
             ui.update_select("select_ec", choices=[""] + list(store.keys()), selected="")
+
+    @output
+    @render.ui
+    def ec_list_summary():
+        store = ec_store.get()
+        if not store:
+            return ui.p("No ECs saved yet.", style="color: #999; font-size: 0.85rem; margin-top: 0.5rem;")
+
+        active = current_ec.get()
+        items = []
+        for name, ec in store.items():
+            badge_color = "#28a745" if name == active else "#6c757d"
+            dt_badge = "Q" if ec['data_type'] == 'qualitative' else "QN"
+            items.append(ui.div(
+                ui.span(f"● {name}", style=f"font-weight: {'600' if name == active else '400'}; color: {badge_color};"),
+                ui.span(f" ({dt_badge}, {ec['feature_count']} features)", style="color: #999; font-size: 0.8rem;"),
+                style="margin: 0.2rem 0;"
+            ))
+        return ui.div(
+            ui.p(f"📋 {len(store)} EC(s) saved:", style="font-weight: 600; margin: 0.5rem 0 0.3rem 0; font-size: 0.9rem;"),
+            *items
+        )
+
+    @reactive.Effect
+    @reactive.event(ec_store)
+    def _update_ec_selector():
+        store = ec_store.get()
+        choices = [""] + list(store.keys())
+        current = current_ec.get() or ""
+        ui.update_select("select_ec", choices=choices, selected=current)
 
     @reactive.Effect
     @reactive.event(uploaded_data)
