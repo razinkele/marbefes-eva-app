@@ -545,6 +545,25 @@ app_ui = ui.page_navbar(
                         style="margin-top: 1rem; width: 100%;"
                     ),
                 ),
+                ui.hr(),
+                ui.div(
+                    ui.h5("🗺️ Upload Spatial Grid", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.p(
+                        "Optional: Upload a GeoJSON file with your hexagonal grid to enable map visualization.",
+                        style="font-size: 0.9rem; color: #6c757d; line-height: 1.6;"
+                    ),
+                    ui.input_file(
+                        "upload_geojson",
+                        "Choose GeoJSON File",
+                        accept=[".geojson", ".json"],
+                        multiple=False,
+                        button_label="Browse...",
+                    ),
+                    ui.p(
+                        "Each feature must have a 'Subzone ID' property matching the CSV data.",
+                        style="font-size: 0.85rem; color: #ff9800; margin-top: 0.5rem;"
+                    ),
+                ),
                 width=380
             ),
             ui.div(
@@ -596,11 +615,12 @@ A2, 1, 1, 0, ...""",
                         )
                     )
                 ),
-                ui.output_ui("data_preview_ui")
+                ui.output_ui("data_preview_ui"),
+                ui.output_ui("geo_preview_ui")
             )
         )
     ),
-    
+
     ui.nav_panel(
         "⚙️ EC Features",
         ui.layout_sidebar(
