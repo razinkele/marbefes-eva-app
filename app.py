@@ -2821,6 +2821,46 @@ def server(input, output, session):
 
             return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="radar_plot"))
 
+        elif plot_type == "AQ Heatmap":
+            # Heatmap of AQ scores across subzones, sorted by EV descending
+            aq_columns = [col for col in results.columns if col.startswith('AQ')]
+            if not aq_columns:
+                return ui.p("No AQ scores available")
+
+            display_cols = aq_columns + ['EV']
+            sorted_results = results.sort_values('EV', ascending=True)
+
+            z_data = sorted_results[display_cols].values
+            x_labels = display_cols
+            y_labels = sorted_results['Subzone ID'].tolist()
+
+            color_scheme = input.color_scheme()
+
+            fig = go.Figure(data=go.Heatmap(
+                z=z_data,
+                x=x_labels,
+                y=y_labels,
+                colorscale=color_scheme,
+                zmin=0,
+                zmax=5,
+                text=np.round(z_data, 1),
+                texttemplate="%{text}",
+                textfont={"size": 10},
+                hoverongaps=False,
+                colorbar=dict(title="Score")
+            ))
+
+            fig.update_layout(
+                title="AQ Scores × Subzones (sorted by EV)",
+                xaxis_title="Assessment Questions",
+                yaxis_title="Subzone ID",
+                height=max(450, len(sorted_results) * 25),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)'
+            )
+
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="aq_heatmap_plot"))
+
         else:  # AQ Scores
             # Create AQ scores histogram
             aq_columns = [col for col in results.columns if col.startswith('AQ')]
