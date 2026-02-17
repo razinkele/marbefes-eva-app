@@ -322,6 +322,39 @@ custom_css = """
             font-size: 1rem;
         }
     }
+    .classification-group {
+        background: #f8f9fa;
+        border-radius: 8px;
+        padding: 0.8rem;
+        margin-bottom: 0.5rem;
+        border-left: 4px solid #006994;
+    }
+    .classification-group-header {
+        font-weight: 600;
+        color: #006994;
+        margin-bottom: 0.5rem;
+        font-size: 0.95rem;
+    }
+    .classification-help {
+        font-size: 0.8rem;
+        color: #6c757d;
+        font-style: italic;
+        margin-bottom: 0.3rem;
+    }
+    .classification-summary {
+        background: linear-gradient(135deg, #e3f2fd 0%, #f1f8e9 100%);
+        border-radius: 8px;
+        padding: 0.8rem;
+        margin-top: 1rem;
+    }
+    .feature-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-right: 4px;
+    }
 </style>
 """
 
@@ -1536,37 +1569,71 @@ def server(input, output, session):
             return ui.p("Please upload data first in the Data Input tab.")
 
         feature_names = df.columns[1:].tolist()
-        
+        classifications = feature_classifications.get() or {}
+
+        badge_colors = {'RRF': '#e91e63', 'NRF': '#9c27b0', 'ESF': '#2196F3', 'HFS_BH': '#4caf50', 'SS': '#ff9800'}
+
         feature_rows = []
         for feature in feature_names:
+            current = classifications.get(feature, [])
+            badges = [ui.span(
+                cls, class_="feature-badge",
+                style=f"background: {badge_colors.get(cls, '#999')}; color: white;"
+            ) for cls in current]
+
             feature_rows.append(
-                ui.row(
-                    ui.column(4, ui.p(ui.strong(feature))),
-                    ui.column(8, ui.input_checkbox_group(
-                        f"class_{feature}",
-                        "",
-                        choices={
-                            "RRF": "RRF (Regionally Rare)",
-                            "NRF": "NRF (Nationally Rare)",
-                            "ESF": "ESF (Ecologically Significant)",
-                            "HFS_BH": "HFS/BH (Habitat Forming)",
-                            "SS": "SS (Symbiotic Species)"
-                        },
-                        inline=True
-                    ))
+                ui.div(
+                    ui.div(
+                        ui.strong(feature), " ", *badges,
+                        style="margin-bottom: 0.3rem;"
+                    ),
+                    ui.div(
+                        ui.div(
+                            ui.div("Rarity", class_="classification-group-header"),
+                            ui.p("Features rare at regional or national level", class_="classification-help"),
+                            ui.input_checkbox_group(
+                                f"class_rarity_{feature}", "",
+                                choices={"RRF": "RRF (Regionally Rare) \u2192 AQ5/AQ6", "NRF": "NRF (Nationally Rare) \u2192 AQ7/AQ8"},
+                                selected=[c for c in current if c in ['RRF', 'NRF']],
+                                inline=True
+                            ),
+                            class_="classification-group"
+                        ),
+                        ui.div(
+                            ui.div("Ecological Role", class_="classification-group-header"),
+                            ui.p("Functional importance in the ecosystem", class_="classification-help"),
+                            ui.input_checkbox_group(
+                                f"class_role_{feature}", "",
+                                choices={
+                                    "ESF": "ESF (Ecologically Significant) \u2192 AQ10/AQ11",
+                                    "HFS_BH": "HFS/BH (Habitat Forming) \u2192 AQ12/AQ13",
+                                    "SS": "SS (Symbiotic) \u2192 AQ14/AQ15"
+                                },
+                                selected=[c for c in current if c in ['ESF', 'HFS_BH', 'SS']],
+                                inline=True
+                            ),
+                            class_="classification-group"
+                        ),
+                    ),
+                    style="padding: 0.8rem; border-bottom: 1px solid #e0e0e0; margin-bottom: 0.5rem;"
                 )
             )
 
+        # Live summary
+        summary_counts = {}
+        for feature, classes in classifications.items():
+            for cls in classes:
+                summary_counts[cls] = summary_counts.get(cls, 0) + 1
+        summary_text = ", ".join([f"{count} {cls}" for cls, count in sorted(summary_counts.items())]) if summary_counts else "No features classified yet"
+
         return ui.TagList(
-            ui.p(f"Detected {len(feature_names)} features. Please classify them below:"),
             ui.div(
-                ui.row(
-                    ui.column(4, ui.h5("Feature Name")),
-                    ui.column(8, ui.h5("Classifications"))
-                ),
-                *feature_rows,
-                style="margin-top: 1.5rem;"
-            )
+                ui.p(f"\U0001f4cb {len(feature_names)} features detected. Classify each feature below."),
+                ui.p(f"\U0001f4ca Summary: {summary_text}", style="font-weight: 600; color: #006994;"),
+                class_="classification-summary"
+            ),
+            ui.input_action_button("reset_classifications", "\U0001f504 Reset All Classifications", class_="btn-outline-secondary btn-sm", style="margin: 1rem 0;"),
+            ui.div(*feature_rows, style="margin-top: 1rem;")
         )
     
     @reactive.Effect
@@ -1590,22 +1657,27 @@ def server(input, output, session):
             feature_classifications.set({})
             return
 
-        current_classifications = {}
+        new_classifications = {}
         for feature in feature_names:
-            # The input ID is constructed as f"class_{feature}"
             try:
-                class_input = getattr(input, f"class_{feature}", None)
-                if class_input is not None:
-                    # Get the selected classifications for the current feature
-                    current_classifications[feature] = class_input()
-                else:
-                    current_classifications[feature] = []
-            except AttributeError:
-                # If input doesn't exist yet, use empty list
-                current_classifications[feature] = []
+                rarity = list(input[f"class_rarity_{feature}"]() or [])
+            except Exception:
+                rarity = []
+            try:
+                role = list(input[f"class_role_{feature}"]() or [])
+            except Exception:
+                role = []
+            combined = rarity + role
+            if combined:
+                new_classifications[feature] = combined
 
-        # Update the central reactive value
-        feature_classifications.set(current_classifications)
+        feature_classifications.set(new_classifications)
+
+    @reactive.Effect
+    @reactive.event(input.reset_classifications)
+    def _reset_classifications():
+        feature_classifications.set({})
+        ui.notification_show("All classifications cleared.", type="message", duration=3)
     
     @output
     @render.table
