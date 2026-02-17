@@ -1250,7 +1250,7 @@ def server(input, output, session):
                 gdf = gpd.read_file(file_path)
         except Exception as e:
             geo_data.set(None)
-            logger.error(f"Could not read spatial file: {e}")
+            ui.notification_show(f"Could not read spatial file: {e}", type="error", duration=8)
             return
 
         # Store original CRS
@@ -1265,7 +1265,7 @@ def server(input, output, session):
                 gdf = gdf.to_crs(epsg=4326)
                 logger.info(f"Reprojected from {original_crs.get()} to EPSG:4326")
             except Exception as e:
-                logger.error(f"CRS reprojection failed: {e}")
+                ui.notification_show(f"CRS reprojection failed: {e}. File used without reprojection.", type="warning", duration=8)
                 return
         elif gdf.crs is None:
             gdf = gdf.set_crs(epsg=4326)
@@ -1297,9 +1297,13 @@ def server(input, output, session):
             csv_ids = set(csv_df['Subzone ID'].astype(str).str.strip())
             geo_ids = set(gdf['Subzone ID'])
             matched = csv_ids & geo_ids
+            csv_only = csv_ids - geo_ids
+            geo_only = geo_ids - csv_ids
             match_info['matched'] = len(matched)
-            match_info['csv_only'] = len(csv_ids - geo_ids)
-            match_info['geo_only'] = len(geo_ids - csv_ids)
+            match_info['csv_only'] = len(csv_only)
+            match_info['geo_only'] = len(geo_only)
+            match_info['csv_only_ids'] = sorted(list(csv_only))[:20]
+            match_info['geo_only_ids'] = sorted(list(geo_only))[:20]
         else:
             match_info['matched'] = 0
             match_info['csv_only'] = 0
@@ -1325,43 +1329,88 @@ def server(input, output, session):
 
         bounds = gdf.total_bounds  # [minx, miny, maxx, maxy]
 
-        match_html = ""
+        items = []
+        items.append(ui.h5(f"📐 Grid: {len(gdf)} features loaded",
+                          style="color: #28a745; font-weight: 600; margin-bottom: 1rem;"))
+        items.append(ui.p(
+            f"📍 Original CRS: {crs}",
+            ui.br(),
+            f"🌐 Bounding box: [{bounds[0]:.4f}, {bounds[1]:.4f}] to [{bounds[2]:.4f}, {bounds[3]:.4f}]",
+            ui.br(),
+            "🔄 Displayed in WGS84 (EPSG:4326)",
+            style="color: #6c757d; line-height: 2;"
+        ))
+
         if match_info and match_info.get('matched', 0) > 0:
-            extra = ""
-            if match_info.get('csv_only', 0) > 0 or match_info.get('geo_only', 0) > 0:
-                extra = f'<p style="margin: 0.25rem 0 0; color: #ff9800; font-size: 0.9rem;">⚠️ {match_info["csv_only"]} CSV-only, {match_info["geo_only"]} GeoJSON-only</p>'
-            match_html = f'''
-                <div style="margin-top: 1rem; padding: 1rem; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #28a745;">
-                    <p style="margin: 0; color: #28a745; font-weight: 600;">
-                        ✅ {match_info['matched']} subzones matched between CSV and GeoJSON
-                    </p>
-                    {extra}
-                </div>
-            '''
+            # Determine match quality
+            if match_info['csv_only'] == 0 and match_info['geo_only'] == 0:
+                match_style = "color: #28a745; font-weight: 600;"
+                match_text = f"✅ {match_info['matched']} subzones fully matched"
+            elif match_info['matched'] > 0:
+                match_style = "color: #ff9800; font-weight: 600;"
+                match_text = f"⚠️ {match_info['matched']} matched, {match_info['csv_only']} CSV-only, {match_info['geo_only']} GeoJSON-only"
+            else:
+                match_style = "color: #d32f2f; font-weight: 600;"
+                match_text = "🔴 No matching Subzone IDs found"
+
+            items.append(ui.p(match_text, style=match_style))
+
+            # Show unmatched IDs if any
+            if match_info.get('csv_only_ids') or match_info.get('geo_only_ids'):
+                unmatched_items = []
+                if match_info.get('csv_only_ids'):
+                    unmatched_items.append(ui.p(
+                        f"CSV-only IDs: {', '.join(str(x) for x in match_info['csv_only_ids'])}",
+                        style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
+                    ))
+                if match_info.get('geo_only_ids'):
+                    unmatched_items.append(ui.p(
+                        f"GeoJSON-only IDs: {', '.join(str(x) for x in match_info['geo_only_ids'])}",
+                        style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
+                    ))
+                items.append(ui.div(
+                    ui.details(
+                        ui.summary("Show unmatched IDs"),
+                        *unmatched_items
+                    ),
+                    style="margin-top: 0.5rem;"
+                ))
         elif match_info:
-            match_html = '''
-                <div style="margin-top: 1rem; padding: 1rem; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
-                    <p style="margin: 0; color: #ff9800; font-weight: 600;">
-                        ⚠️ Upload CSV data to see match status
-                    </p>
-                </div>
-            '''
+            # No matched IDs — could be no CSV uploaded or truly zero matches
+            if match_info.get('matched', 0) == 0 and (match_info.get('csv_only', 0) > 0 or match_info.get('geo_only', 0) > 0):
+                match_style = "color: #d32f2f; font-weight: 600;"
+                match_text = "🔴 No matching Subzone IDs found"
+                items.append(ui.p(match_text, style=match_style))
+
+                # Show unmatched IDs if any
+                if match_info.get('csv_only_ids') or match_info.get('geo_only_ids'):
+                    unmatched_items = []
+                    if match_info.get('csv_only_ids'):
+                        unmatched_items.append(ui.p(
+                            f"CSV-only IDs: {', '.join(str(x) for x in match_info['csv_only_ids'])}",
+                            style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
+                        ))
+                    if match_info.get('geo_only_ids'):
+                        unmatched_items.append(ui.p(
+                            f"GeoJSON-only IDs: {', '.join(str(x) for x in match_info['geo_only_ids'])}",
+                            style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
+                        ))
+                    items.append(ui.div(
+                        ui.details(
+                            ui.summary("Show unmatched IDs"),
+                            *unmatched_items
+                        ),
+                        style="margin-top: 0.5rem;"
+                    ))
+            else:
+                items.append(ui.p("⚠️ Upload CSV data to see match status",
+                                  style="color: #ff9800; font-weight: 600;"))
 
         return ui.card(
             ui.card_header("🗺️ Spatial Grid Preview"),
             ui.div(
                 ui.div(
-                    ui.h5(f"📐 Grid: {len(gdf)} features loaded",
-                          style="color: #28a745; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.p(
-                        f"📍 Original CRS: {crs}",
-                        ui.br(),
-                        f"🌐 Bounding box: [{bounds[0]:.4f}, {bounds[1]:.4f}] to [{bounds[2]:.4f}, {bounds[3]:.4f}]",
-                        ui.br(),
-                        "🔄 Displayed in WGS84 (EPSG:4326)",
-                        style="color: #6c757d; line-height: 2;"
-                    ),
-                    ui.HTML(match_html),
+                    *items,
                     class_="info-box"
                 ),
                 style="padding: 1rem;"
