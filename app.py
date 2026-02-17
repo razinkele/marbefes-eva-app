@@ -2838,6 +2838,24 @@ def server(input, output, session):
             # Update the select dropdown
             ui.update_select("select_ec", choices=[""] + list(store.keys()), selected="")
 
+    @reactive.Effect
+    @reactive.event(calculate_results)
+    def _auto_update_stored_ec():
+        ec_name = current_ec.get()
+        if ec_name is None:
+            return
+        store = ec_store.get()
+        if ec_name not in store:
+            return
+        results = calculate_results()
+        df = uploaded_data.get()
+        if results is not None and df is not None:
+            updated = store.copy()
+            updated[ec_name]['results'] = results.copy()
+            updated[ec_name]['classifications'] = feature_classifications.get().copy()
+            updated[ec_name]['data_type'] = input.data_type()
+            ec_store.set(updated)
+
     @output
     @render.ui
     def ec_list_summary():
