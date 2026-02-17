@@ -2547,49 +2547,82 @@ def server(input, output, session):
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
 
             # Sheet 1: Summary & Metadata
-            summary_data = {
-                'Parameter': [
-                    'Analysis Date',
-                    'Analysis Time',
-                    'Application Version',
-                    'EC Name',
-                    'Study Area',
-                    'Data Type',
-                    'Data Description',
-                    '',
-                    'Dataset Statistics',
-                    'Number of Subzones',
-                    'Number of Features',
-                    'Total EV (Sum)',
-                    'Average EV',
-                    'Maximum EV',
-                    'Minimum EV',
-                    '',
-                    'Reference',
-                    'Funding',
-                ],
-                'Value': [
-                    pd.Timestamp.now().strftime('%Y-%m-%d'),
-                    pd.Timestamp.now().strftime('%H:%M:%S'),
-                    '2.1.2',
-                    input.ec_name() if input.ec_name() else 'Not specified',
-                    input.study_area() if input.study_area() else 'Not specified',
-                    data_type if data_type else 'Not specified',
-                    input.data_description() if input.data_description() else 'Not specified',
-                    '',
-                    '',
-                    len(results),
-                    len([col for col in df.columns if col != 'Subzone ID']),
-                    f"{results['EV'].sum():.4f}",
-                    f"{results['EV'].mean():.4f}",
-                    f"{results['EV'].max():.4f}",
-                    f"{results['EV'].min():.4f}",
-                    '',
-                    'Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA)',
-                    'European Union Horizon Europe Research Programme - MARBEFES Project',
+            store = ec_store.get()
+            if len(store) >= 2:
+                # Multi-EC summary
+                summary_rows = [
+                    ('Analysis Date', pd.Timestamp.now().strftime('%Y-%m-%d')),
+                    ('Analysis Time', pd.Timestamp.now().strftime('%H:%M:%S')),
+                    ('Application Version', '2.1.2'),
+                    ('Study Area', input.study_area() if input.study_area() else 'Not specified'),
+                    ('Data Description', input.data_description() if input.data_description() else 'Not specified'),
+                    ('', ''),
+                    ('Multi-EC Analysis', ''),
+                    ('Number of ECs', len(store)),
+                    ('Total Features (all ECs)', sum(ec['feature_count'] for ec in store.values())),
                 ]
-            }
-            summary_df = pd.DataFrame(summary_data)
+
+                ev_vals = []
+                for ec in store.values():
+                    if ec['results'] is not None:
+                        ev_vals.extend(ec['results']['EV'].tolist())
+                if ev_vals:
+                    summary_rows.extend([
+                        ('Total EV (Sum, all ECs)', f"{sum(ev_vals):.4f}"),
+                        ('Average EV (across all subzones)', f"{np.mean(ev_vals):.4f}"),
+                        ('Maximum EV', f"{max(ev_vals):.4f}"),
+                        ('Minimum EV', f"{min(ev_vals):.4f}"),
+                    ])
+
+                summary_rows.extend([
+                    ('', ''),
+                    ('Per-EC Details', ''),
+                ])
+
+                for ec_name_s, ec in store.items():
+                    mean_ev = ec['results']['EV'].mean() if ec['results'] is not None else 0
+                    max_ev = ec['results']['EV'].max() if ec['results'] is not None else 0
+                    summary_rows.append((f"  EC: {ec_name_s}", f"{ec['data_type']}, {ec['feature_count']} features, Mean EV={mean_ev:.2f}, Max EV={max_ev:.2f}"))
+
+                summary_rows.extend([
+                    ('', ''),
+                    ('Reference', 'Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA)'),
+                    ('Funding', 'European Union Horizon Europe Research Programme - MARBEFES Project'),
+                ])
+
+                summary_df = pd.DataFrame(summary_rows, columns=['Parameter', 'Value'])
+            else:
+                # Single-EC summary (existing behavior)
+                summary_data = {
+                    'Parameter': [
+                        'Analysis Date', 'Analysis Time', 'Application Version',
+                        'EC Name', 'Study Area', 'Data Type', 'Data Description',
+                        '', 'Dataset Statistics', 'Number of Subzones', 'Number of Features',
+                        'Total EV (Sum)', 'Average EV', 'Maximum EV', 'Minimum EV',
+                        '', 'Reference', 'Funding',
+                    ],
+                    'Value': [
+                        pd.Timestamp.now().strftime('%Y-%m-%d'),
+                        pd.Timestamp.now().strftime('%H:%M:%S'),
+                        '2.1.2',
+                        input.ec_name() if input.ec_name() else 'Not specified',
+                        input.study_area() if input.study_area() else 'Not specified',
+                        data_type if data_type else 'Not specified',
+                        input.data_description() if input.data_description() else 'Not specified',
+                        '', '',
+                        len(results),
+                        len([col for col in df.columns if col != 'Subzone ID']),
+                        f"{results['EV'].sum():.4f}",
+                        f"{results['EV'].mean():.4f}",
+                        f"{results['EV'].max():.4f}",
+                        f"{results['EV'].min():.4f}",
+                        '',
+                        'Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA)',
+                        'European Union Horizon Europe Research Programme - MARBEFES Project',
+                    ]
+                }
+                summary_df = pd.DataFrame(summary_data)
+
             summary_df.to_excel(writer, sheet_name='Summary & Metadata', index=False)
 
             # Sheet 2: Original Data (with NaN replaced by 0)
