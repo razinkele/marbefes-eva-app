@@ -2434,6 +2434,217 @@ def server(input, output, session):
             
             return ui.p("No AQ scores available")
 
+    # === GIS MAP FUNCTIONS ===
+
+    def auto_zoom_level(bounds):
+        """Calculate appropriate zoom level from bounding box [minx, miny, maxx, maxy]."""
+        lat_diff = bounds[3] - bounds[1]
+        lon_diff = bounds[2] - bounds[0]
+        max_diff = max(lat_diff, lon_diff)
+        if max_diff > 10:
+            return 5
+        elif max_diff > 5:
+            return 7
+        elif max_diff > 1:
+            return 9
+        elif max_diff > 0.1:
+            return 12
+        else:
+            return 14
+
+    EVA_5CLASS_BINS = [0, 1, 2, 3, 4, 5]
+    EVA_5CLASS_COLORS = ['#3288bd', '#99d594', '#e6f598', '#fc8d59', '#d53e4f']
+    EVA_5CLASS_LABELS = ['Very Low (0-1)', 'Low (1-2)', 'Medium (2-3)', 'High (3-4)', 'Very High (4-5)']
+
+    BASEMAP_TILES = {
+        "CartoDB Positron": "cartodbpositron",
+        "OpenStreetMap": "openstreetmap",
+        "CartoDB Dark Matter": "cartodbdark_matter",
+    }
+
+    def create_ev_map(map_gdf, variable, color_scheme_name, classification, basemap_name, opacity):
+        """Create a folium choropleth map from a GeoDataFrame with EVA results."""
+        bounds = map_gdf.total_bounds
+        center = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+        zoom = auto_zoom_level(bounds)
+
+        tiles = BASEMAP_TILES.get(basemap_name, "cartodbpositron")
+        m = folium.Map(location=center, zoom_start=zoom, tiles=tiles)
+
+        # Prepare variable data
+        map_gdf = map_gdf.copy()
+        if variable in map_gdf.columns:
+            map_gdf[variable] = pd.to_numeric(map_gdf[variable], errors='coerce').fillna(0)
+        else:
+            map_gdf[variable] = 0
+
+        vmin = float(map_gdf[variable].min())
+        vmax = float(map_gdf[variable].max())
+        if vmax == vmin:
+            vmax = vmin + 1
+
+        use_5class = classification.startswith("EVA")
+
+        if use_5class:
+            def style_fn(feature):
+                val = feature['properties'].get(variable, 0)
+                if val is None:
+                    val = 0
+                color = EVA_5CLASS_COLORS[-1]
+                for i in range(len(EVA_5CLASS_BINS) - 1):
+                    if val <= EVA_5CLASS_BINS[i + 1]:
+                        color = EVA_5CLASS_COLORS[i]
+                        break
+                return {
+                    'fillColor': color,
+                    'color': '#333333',
+                    'weight': 0.5,
+                    'fillOpacity': opacity
+                }
+        else:
+            color_schemes = {
+                "YlOrRd": cm.linear.YlOrRd_09,
+                "Viridis": cm.linear.viridis,
+                "Blues": cm.linear.Blues_09,
+                "RdYlGn": cm.linear.RdYlGn_11,
+                "Plasma": cm.linear.plasma,
+            }
+            colormap = color_schemes.get(color_scheme_name, cm.linear.YlOrRd_09)
+            colormap = colormap.scale(vmin, vmax)
+            colormap.caption = variable
+
+            def style_fn(feature):
+                val = feature['properties'].get(variable, 0)
+                if val is None:
+                    val = 0
+                return {
+                    'fillColor': colormap(val),
+                    'color': '#333333',
+                    'weight': 0.5,
+                    'fillOpacity': opacity
+                }
+
+        # Build tooltip fields
+        tooltip_fields = ['Subzone ID', variable]
+        tooltip_aliases = ['Subzone:', f'{variable}:']
+        if variable != 'EV' and 'EV' in map_gdf.columns:
+            tooltip_fields.append('EV')
+            tooltip_aliases.append('EV:')
+
+        # Round numeric columns for tooltips
+        for col in tooltip_fields:
+            if col in map_gdf.columns and col != 'Subzone ID':
+                map_gdf[col] = map_gdf[col].round(3)
+
+        folium.GeoJson(
+            map_gdf.to_json(),
+            style_function=style_fn,
+            tooltip=folium.GeoJsonTooltip(
+                fields=tooltip_fields,
+                aliases=tooltip_aliases,
+                sticky=True,
+                style="font-size: 13px; padding: 8px;"
+            )
+        ).add_to(m)
+
+        # Add legend
+        if use_5class:
+            legend_html = '<div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000; background: white; padding: 12px 16px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-size: 13px;">'
+            legend_html += f'<p style="margin: 0 0 8px; font-weight: 700;">{variable}</p>'
+            for i in range(len(EVA_5CLASS_COLORS)):
+                legend_html += f'<p style="margin: 2px 0;"><span style="background:{EVA_5CLASS_COLORS[i]}; width:18px; height:14px; display:inline-block; margin-right:6px; border-radius:2px;"></span>{EVA_5CLASS_LABELS[i]}</p>'
+            legend_html += '</div>'
+            m.get_root().html.add_child(folium.Element(legend_html))
+        else:
+            colormap.add_to(m)
+
+        folium.plugins.Fullscreen(position='topright').add_to(m)
+        m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
+
+        return m._repr_html_()
+
+    # Map output renderer
+    @output
+    @render.ui
+    def map_output():
+        gdf = geo_data.get()
+        results = calculate_results()
+
+        if gdf is None:
+            return ui.div(
+                ui.div(
+                    ui.h4("🗺️ No Spatial Data", style="color: #006994; text-align: center; margin-top: 3rem;"),
+                    ui.p(
+                        "Upload a GeoJSON file in the Data Input tab to enable map visualization.",
+                        style="text-align: center; color: #6c757d; font-size: 1.1rem; max-width: 500px; margin: 1rem auto;"
+                    ),
+                    ui.div(
+                        ui.p("📋 Requirements:", style="font-weight: 600; color: #006994;"),
+                        ui.tags.ol(
+                            ui.tags.li("Upload your CSV data (species/habitat features)"),
+                            ui.tags.li("Upload a GeoJSON file with your hexagonal grid"),
+                            ui.tags.li("Ensure 'Subzone ID' properties match between files"),
+                        ),
+                        style="max-width: 400px; margin: 1.5rem auto; text-align: left; line-height: 2;"
+                    ),
+                    style="padding: 2rem;"
+                )
+            )
+
+        if results is None:
+            return ui.div(
+                ui.p(
+                    "⚠️ Calculate EVA results first (upload CSV and select data type) to see values on the map.",
+                    style="text-align: center; color: #ff9800; font-size: 1.1rem; padding: 3rem;"
+                )
+            )
+
+        try:
+            aq_ev_cols = ['Subzone ID'] + [c for c in results.columns if c.startswith('AQ') or c == 'EV']
+            results_subset = results[aq_ev_cols].copy()
+            merged = gdf.merge(results_subset, on='Subzone ID', how='inner')
+
+            if len(merged) == 0:
+                return ui.div(
+                    ui.p(
+                        "❌ No matching Subzone IDs found between GeoJSON and CSV data.",
+                        style="text-align: center; color: #d32f2f; font-size: 1.1rem; padding: 3rem;"
+                    )
+                )
+
+            variable = input.map_variable()
+            color_scheme = input.map_color_scheme()
+            classification = input.map_classification()
+            basemap = input.map_basemap()
+            opacity = input.map_opacity()
+
+            map_html = create_ev_map(merged, variable, color_scheme, classification, basemap, opacity)
+
+            vals = merged[variable] if variable in merged.columns else pd.Series([0])
+            vals = pd.to_numeric(vals, errors='coerce').fillna(0)
+
+            return ui.TagList(
+                ui.div(
+                    ui.span(f"📊 {variable}: ", style="font-weight: 600; color: #006994;"),
+                    ui.span(f"Min={vals.min():.2f}  Mean={vals.mean():.2f}  Max={vals.max():.2f}", style="color: #495057;"),
+                    ui.span(f"  |  🗺️ {len(merged)} subzones mapped", style="color: #6c757d; margin-left: 1rem;"),
+                    style="padding: 0.75rem 1rem; background: #f8f9fa; border-radius: 8px; margin-bottom: 0.5rem; font-size: 0.95rem;"
+                ),
+                ui.div(
+                    ui.HTML(map_html),
+                    style="height: 600px; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #dee2e6;"
+                )
+            )
+
+        except Exception as e:
+            logger.error(f"Error generating map: {e}")
+            return ui.div(
+                ui.p(
+                    f"❌ Error generating map: {str(e)}",
+                    style="text-align: center; color: #d32f2f; padding: 2rem;"
+                )
+            )
+
 
 # Create the app with static file serving
 app = App(app_ui, server, static_assets=Path(__file__).parent / "www")
