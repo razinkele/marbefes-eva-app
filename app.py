@@ -2711,6 +2711,38 @@ def server(input, output, session):
             results_complete = results_complete.fillna(0)
             results_complete.to_excel(writer, sheet_name='Complete Results', index=False)
 
+            # Multi-EC sheets (if multiple ECs saved)
+            store = ec_store.get()
+            if len(store) >= 2:
+                # Aggregation sheet
+                ev_frames = {}
+                for ec_name, ec in store.items():
+                    if ec['results'] is not None:
+                        ev_frames[ec_name] = ec['results'][['Subzone ID', 'EV']].rename(columns={'EV': ec_name})
+
+                if ev_frames:
+                    merged = None
+                    for ec_name, df_ev in ev_frames.items():
+                        if merged is None:
+                            merged = df_ev
+                        else:
+                            merged = merged.merge(df_ev, on='Subzone ID', how='outer')
+                    ec_names = list(ev_frames.keys())
+                    merged[ec_names] = merged[ec_names].fillna(0)
+                    merged['Total EV'] = merged[ec_names].sum(axis=1)
+                    merged = merged.sort_values('Total EV', ascending=False)
+                    merged.to_excel(writer, sheet_name='Aggregated EV', index=False, startrow=2)
+                    ws = writer.sheets['Aggregated EV']
+                    ws.cell(row=1, column=1, value='Aggregated Ecological Value Across All ECs')
+
+                # Per-EC result sheets
+                for ec_name, ec in store.items():
+                    if ec['results'] is not None:
+                        sheet_name = f"EC - {ec_name}"[:31]  # Excel 31-char limit
+                        ec['results'].to_excel(writer, sheet_name=sheet_name, index=False, startrow=2)
+                        ws = writer.sheets[sheet_name]
+                        ws.cell(row=1, column=1, value=f"Results for EC: {ec_name} ({ec['data_type']})")
+
             # Format worksheets
             workbook = writer.book
 
