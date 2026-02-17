@@ -14,13 +14,35 @@ import numpy as np
 from pathlib import Path
 import io
 import os
+import logging
 import plotly.graph_objects as go
 import plotly.express as px
+import geopandas as gpd
+import folium
+import folium.plugins
+import branca.colormap as cm
+import json
 
-# Optimized CSS with reduced redundancy and better organization
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Application Constants
+MAX_FEATURES = 100  # Maximum number of features allowed
+LOCALLY_RARE_THRESHOLD = 0.05  # 5% threshold for locally rare features
+PERCENTILE_95 = 95  # 95th percentile for concentration calculations
+MAX_EV_SCALE = 5  # Maximum value on the EV scale (0-5)
+PREVIEW_ROWS_LIMIT = 10  # Number of rows to show in data preview
+RESULTS_DISPLAY_LIMIT = 20  # Number of results to display in tables
+MAX_FILE_SIZE_MB = 50  # Maximum file size for uploads in MB
+
+# Custom CSS for enhanced styling
 custom_css = """
 <style>
-    /* CSS Variables - Single source of truth for colors and spacing */
+    /* Main color scheme */
     :root {
         --primary-blue: #0066cc;
         --secondary-blue: #4da6ff;
@@ -28,44 +50,13 @@ custom_css = """
         --success-green: #28a745;
         --ocean-blue: #006994;
         --light-bg: #f8f9fa;
-        --text-dark: #495057;
-        --text-muted: #6c757d;
-        --border-light: #dee2e6;
-        
-        /* Gradient definitions */
-        --gradient-primary: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%);
-        --gradient-secondary: linear-gradient(135deg, var(--secondary-blue) 0%, var(--primary-blue) 100%);
-        --gradient-light: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
-        
-        /* Spacing */
-        --spacing-xs: 0.5rem;
-        --spacing-sm: 1rem;
-        --spacing-md: 1.5rem;
-        --spacing-lg: 2rem;
-        
-        /* Shadows */
-        --shadow-light: 0 2px 4px rgba(0,0,0,0.06);
-        --shadow-medium: 0 4px 6px rgba(0,0,0,0.07);
-        --shadow-hover: 0 8px 15px rgba(0,0,0,0.1);
-        
-        /* Transitions */
-        --transition-smooth: all 0.3s ease;
     }
     
-    /* Base hover effects - DRY principle */
-    .hover-lift {
-        transition: var(--transition-smooth);
-    }
-    .hover-lift:hover {
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-hover);
-    }
-    
-    /* Navigation */
+    /* Header styling */
     .navbar {
-        background: var(--gradient-primary) !important;
-        box-shadow: var(--shadow-light);
-        padding: var(--spacing-xs) var(--spacing-sm);
+        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%) !important;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        padding: 0.5rem 1rem;
     }
     
     .navbar-brand {
@@ -77,66 +68,119 @@ custom_css = """
         gap: 15px;
     }
     
+    .logo-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .logo-circle {
+        width: 50px;
+        height: 50px;
+        background: linear-gradient(135deg, #fff 0%, #e3f2fd 100%);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        font-size: 1.2rem;
+        color: var(--ocean-blue);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        border: 3px solid rgba(255,255,255,0.3);
+    }
+    
     .nav-link {
         color: rgba(255,255,255,0.9) !important;
         font-weight: 500;
-        transition: var(--transition-smooth);
+        transition: all 0.3s ease;
         border-radius: 5px;
-        padding: var(--spacing-xs) var(--spacing-sm);
+        padding: 0.5rem 1rem;
     }
     
-    .nav-link:hover { background-color: rgba(255,255,255,0.15); color: white !important; }
-    .nav-link.active { background-color: rgba(255,255,255,0.25) !important; color: white !important; font-weight: 600; }
+    .nav-link:hover {
+        background-color: rgba(255,255,255,0.15);
+        color: white !important;
+    }
     
-    /* Cards - consolidated styling */
+    .nav-link.active {
+        background-color: rgba(255,255,255,0.25) !important;
+        color: white !important;
+        font-weight: 600;
+    }
+    
+    /* Card enhancements */
     .card {
         border: none;
         border-radius: 12px;
-        box-shadow: var(--shadow-medium);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.07);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
         overflow: hidden;
     }
-    .card.hover-lift { transition: var(--transition-smooth); }
+    
+    .card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+    }
     
     .card-header {
-        background: var(--gradient-primary);
+        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--secondary-blue) 100%);
         color: white;
         font-weight: 600;
         font-size: 1.2rem;
-        padding: var(--spacing-sm) var(--spacing-md);
+        padding: 1rem 1.5rem;
         border-bottom: none;
     }
     
-    .card-body { padding: var(--spacing-md); }
+    .card-body {
+        padding: 1.5rem;
+    }
     
-    /* Buttons - unified button system */
+    /* Sidebar styling */
+    .bslib-sidebar-layout > .sidebar {
+        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+        border-right: 2px solid #dee2e6;
+        border-radius: 8px 0 0 8px;
+        padding: 1.5rem;
+    }
+    
+    .sidebar h4 {
+        color: var(--ocean-blue);
+        font-weight: 700;
+        margin-bottom: 1rem;
+        border-bottom: 3px solid var(--accent-teal);
+        padding-bottom: 0.5rem;
+    }
+    
+    /* Button styling */
     .btn-primary {
-        background: var(--gradient-primary);
+        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%);
         border: none;
         border-radius: 8px;
-        padding: 0.6rem var(--spacing-md);
+        padding: 0.6rem 1.5rem;
         font-weight: 600;
-        box-shadow: var(--shadow-light);
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    
+    .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
     }
     
     .btn-secondary {
         background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
         border: none;
         border-radius: 8px;
-        padding: 0.6rem var(--spacing-md);
+        padding: 0.6rem 1.5rem;
         font-weight: 600;
     }
     
-    .btn-primary:hover, .btn-secondary:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-    }
-    
-    /* Forms */
+    /* Input styling */
     .form-control, .form-select {
-        border: 2px solid var(--border-light);
+        border: 2px solid #dee2e6;
         border-radius: 8px;
-        padding: 0.6rem var(--spacing-sm);
-        transition: var(--transition-smooth);
+        padding: 0.6rem 1rem;
+        transition: all 0.3s ease;
     }
     
     .form-control:focus, .form-select:focus {
@@ -144,69 +188,109 @@ custom_css = """
         box-shadow: 0 0 0 0.2rem rgba(0, 184, 212, 0.25);
     }
     
-    /* Sidebar */
-    .bslib-sidebar-layout > .sidebar {
-        background: var(--gradient-light);
-        border-right: 2px solid var(--border-light);
-        border-radius: 8px 0 0 8px;
-        padding: var(--spacing-md);
-    }
-    
-    .sidebar h4, .sidebar h5 {
-        color: var(--ocean-blue);
-        font-weight: 600;
-        margin-bottom: var(--spacing-sm);
-        border-bottom: 3px solid var(--accent-teal);
-        padding-bottom: var(--spacing-xs);
-    }
-    
-    /* Content sections */
-    .welcome-banner {
-        background: var(--gradient-primary);
-        color: white;
-        padding: var(--spacing-lg);
-        border-radius: 12px;
-        margin-bottom: var(--spacing-md);
-        box-shadow: var(--shadow-medium);
-    }
-    
-    .info-box {
-        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-        border-left: 4px solid var(--primary-blue);
-        padding: var(--spacing-sm) var(--spacing-md);
-        border-radius: 8px;
-        margin: var(--spacing-sm) 0;
-    }
-    
-    /* Tables */
-    table { border-radius: 8px; overflow: hidden; }
-    table thead { background: var(--gradient-primary); color: white; }
-    table tbody tr:hover { background-color: rgba(0, 184, 212, 0.1); }
-    
-    /* Value boxes */
+    /* Value box enhancements */
     .bslib-value-box {
         border-radius: 12px;
         border: none;
-        box-shadow: var(--shadow-medium);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+        transition: all 0.3s ease;
     }
     
-    /* Typography */
-    .markdown-content { line-height: 1.8; }
-    .markdown-content h3, .markdown-content h4 { color: var(--ocean-blue); font-weight: 600; }
-    .markdown-content h3 { border-left: 4px solid var(--accent-teal); padding-left: var(--spacing-sm); }
+    .bslib-value-box:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 15px rgba(0,0,0,0.12);
+    }
     
-    /* Utilities */
-    .text-muted { color: var(--text-muted) !important; }
-    .text-dark { color: var(--text-dark) !important; }
-    hr { border-top: 2px solid var(--accent-teal); margin: var(--spacing-md) 0; }
+    .bslib-value-box .value-box-value {
+        font-size: 2.5rem;
+        font-weight: 700;
+    }
+    
+    /* Table styling */
+    table {
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    
+    table thead {
+        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--secondary-blue) 100%);
+        color: white;
+    }
+    
+    table tbody tr:hover {
+        background-color: rgba(0, 184, 212, 0.1);
+    }
+    
+    /* Markdown content */
+    .markdown-content {
+        line-height: 1.8;
+    }
+    
+    .markdown-content h3 {
+        color: var(--ocean-blue);
+        font-weight: 700;
+        margin-top: 1.5rem;
+        margin-bottom: 1rem;
+        border-left: 4px solid var(--accent-teal);
+        padding-left: 1rem;
+    }
+    
+    .markdown-content h4 {
+        color: var(--ocean-blue);
+        font-weight: 600;
+        margin-top: 1rem;
+    }
+    
+    .markdown-content code {
+        background-color: #f8f9fa;
+        padding: 0.2rem 0.4rem;
+        border-radius: 4px;
+        color: #e83e8c;
+        font-size: 0.9em;
+    }
+    
+    /* Horizontal rule */
+    hr {
+        border-top: 2px solid var(--accent-teal);
+        margin: 1.5rem 0;
+    }
+    
+    /* Welcome banner */
+    .welcome-banner {
+        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+    }
+    
+    .welcome-banner h2 {
+        font-weight: 700;
+        margin-bottom: 0.5rem;
+    }
+    
+    .welcome-banner p {
+        font-size: 1.1rem;
+        opacity: 0.95;
+    }
+    
+    /* Info boxes */
+    .info-box {
+        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+        border-left: 4px solid var(--primary-blue);
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+    }
     
     /* Footer */
     .app-footer {
         background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
         color: white;
-        padding: var(--spacing-md);
+        padding: 1.5rem;
         text-align: center;
-        margin-top: var(--spacing-lg);
+        margin-top: 2rem;
         border-radius: 12px;
         font-size: 0.9rem;
     }
@@ -217,70 +301,29 @@ custom_css = """
         to { opacity: 1; transform: translateY(0); }
     }
     
-    .card, .bslib-value-box { animation: fadeIn 0.5s ease-out; }
+    .card, .bslib-value-box {
+        animation: fadeIn 0.5s ease-out;
+    }
     
-    /* Responsive */
+    /* Icons */
+    .icon {
+        margin-right: 8px;
+    }
+    
+    /* Responsive adjustments */
     @media (max-width: 768px) {
-        .navbar-brand { font-size: 1.2rem; }
-        :root { --spacing-md: 1rem; --spacing-lg: 1.5rem; }
+        .navbar-brand {
+            font-size: 1.2rem;
+        }
+        
+        .logo-circle {
+            width: 40px;
+            height: 40px;
+            font-size: 1rem;
+        }
     }
 </style>
 """
-
-# Utility functions for common UI components
-def create_logo_section(height: int = 50):
-    """Create consistent logo section with both MARBEFES and IECS logos"""
-    return ui.div(
-        ui.HTML(f'<img src="marbefes.png" alt="MARBEFES Logo" style="height: {height}px; margin-right: 10px;">'),
-        ui.HTML(f'<img src="iecs.png" alt="IECS Logo" style="height: {height}px;">'),
-        style="display: flex; align-items: center; justify-content: center;"
-    )
-
-def create_info_card(header: str, content, icon: str = "ℹ️"):
-    """Create consistent info card with header and content"""
-    return ui.card(
-        ui.card_header(f"{icon} {header}"),
-        ui.div(content, style="padding: 1rem;")
-    )
-
-def create_feature_summary_item(title: str, description: str, color: str):
-    """Create consistent feature summary items for key concepts section"""
-    return ui.div(
-        ui.h4(title, style=f"color: {color}; font-weight: 700; margin-bottom: 0.5rem;"),
-        ui.p(description, style="color: var(--text-muted); margin: 0;"),
-        style="padding: 1rem; background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border-radius: 8px;"
-    )
-
-# Configuration constants
-ASSESSMENT_QUESTIONS = [
-    "AQ1: Locally rare features (LRF)",
-    "AQ2: Regionally rare features (RRF)", 
-    "AQ3: Nationally rare features (NRF)",
-    "AQ4: Regularly occurring features (ROF)",
-    "AQ5: Ecologically significant features (ESF)",
-    "AQ6: Habitat forming species (HFS)",
-    "AQ7: Biogenic habitat (BH)",
-    "AQ8: Symbiotic species (SS)",
-    "AQ9: Combined score"
-]
-
-ACRONYMS_DATA = {
-    "Acronym": ["EVA", "EV", "EC", "AQ", "LRF", "RRF", "NRF", "ROF", "ESF", "HFS", "BH", "SS"],
-    "Full Name": [
-        "Ecological value assessment",
-        "Ecological value", 
-        "Ecosystem component",
-        "Assessment question",
-        "Locally rare feature",
-        "Regionally rare feature",
-        "Nationally rare feature", 
-        "Regularly occurring feature",
-        "Ecologically significant feature",
-        "Habitat forming species",
-        "Biogenic habitat",
-        "Symbiotic species"
-    ]
-}
 
 # App UI
 app_ui = ui.page_navbar(
@@ -291,8 +334,9 @@ app_ui = ui.page_navbar(
                 ui.div(
                     ui.div(
                         ui.div(
-                            create_logo_section(50),
-                            style="margin: 0 auto 1rem; padding: 10px; background: white; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
+                            ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 50px; margin-right: 10px;">'),
+                            ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 50px;">'),
+                            style="display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; padding: 10px; background: white; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
                         ),
                         ui.h4("MARBEFES EVA", style="text-align: center; color: #006994; font-weight: 700;"),
                         ui.p("Phase 2 Assessment Tool", style="text-align: center; color: #6c757d; font-size: 0.9rem;"),
@@ -330,8 +374,9 @@ app_ui = ui.page_navbar(
                     ui.div(
                         ui.h1(
                             ui.div(
-                                create_logo_section(60),
-                                ui.span("MARBEFES", style="font-weight: 800; margin: 0 15px;"),
+                                ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 60px; margin-right: 15px;">'),
+                                ui.span("MARBEFES", style="font-weight: 800;"),
+                                ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 60px; margin-left: 15px;">'),
                                 style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; justify-content: center;"
                             ),
                             style="margin: 0;"
@@ -371,8 +416,8 @@ app_ui = ui.page_navbar(
                         ui.div(
                             ui.tags.ol(
                                 ui.tags.li(
-                                    ui.strong("📚 Learn the Terminology: "),
-                                    "Visit the Acronyms tab"
+                                    ui.strong("📖 Learn the Methodology: "),
+                                    "Visit the Method tab for terminology and AQ guide"
                                 ),
                                 ui.tags.li(
                                     ui.strong("📁 Upload Your Data: "),
@@ -456,300 +501,7 @@ app_ui = ui.page_navbar(
     ),
     
     ui.nav_panel(
-        "📚 Acronyms",
-        ui.div(
-            ui.div(
-                ui.h2("📚 Acronyms and Definitions", style="color: #006994; font-weight: 700; margin-bottom: 1.5rem;"),
-                ui.p(
-                    "Understanding the terminology used in the Ecological Value Assessment framework.",
-                    style="font-size: 1.1rem; color: #6c757d; margin-bottom: 2rem;"
-                )
-            ),
-            ui.card(
-                ui.card_header("🔤 EVA Terminology Reference"),
-                ui.div(
-                    ui.output_table("acronyms_table"),
-                    style="padding: 1rem;"
-                )
-            )
-        )
-    ),
-    
-    ui.nav_panel(
-        "📐 Formulas & Methods",
-        ui.div(
-            ui.div(
-                ui.h2("📐 EVA Calculation Formulas & Methods", style="color: var(--ocean-blue); font-weight: 700; margin-bottom: var(--spacing-md);"),
-                ui.p(
-                    "Detailed mathematical formulas and methodologies used in the Ecological Value Assessment framework.",
-                    style="font-size: 1.1rem; color: var(--text-muted); margin-bottom: var(--spacing-lg);"
-                ),
-                class_="markdown-content"
-            ),
-            
-            # Overview Card
-            ui.card(
-                ui.card_header("🎯 Assessment Framework Overview"),
-                ui.div(
-                    ui.p(
-                        "The EVA framework uses a structured approach with 9 Assessment Questions (AQ1-AQ9) to evaluate ecological value across spatial units (subzones). "
-                        "Each assessment question targets specific ecological characteristics.",
-                        style="line-height: 1.8; margin-bottom: var(--spacing-sm);"
-                    ),
-                    ui.div(
-                        ui.h5("Key Metrics", style="color: var(--ocean-blue); font-weight: 600; margin-top: var(--spacing-md);"),
-                        ui.tags.ul(
-                            ui.tags.li(ui.strong("X"), " = Total mean abundance/area across all subzones"),
-                            ui.tags.li(ui.strong("Xi"), " = Abundance/area in subzone i"),
-                            ui.tags.li(ui.strong("Y"), " = Percentage of abundance in top 5% subzones"),
-                            ui.tags.li(ui.strong("Z"), " = Number of occurrences (presences) across all subzones"),
-                            ui.tags.li(ui.strong("EV"), " = Ecological Value (final score)"),
-                            style="line-height: 2;"
-                        ),
-                        class_="info-box"
-                    ),
-                    style="padding: var(--spacing-md);"
-                )
-            ),
-            
-            # Main Calculations
-            ui.layout_column_wrap(
-                # Left Column - AQ Formulas
-                ui.card(
-                    ui.card_header("📊 Assessment Question Calculations"),
-                    ui.div(
-                        ui.h5("AQ1-AQ3: Rarity Assessments", style="color: var(--ocean-blue); font-weight: 600; margin-bottom: var(--spacing-sm);"),
-                        ui.tags.dl(
-                            ui.tags.dt(ui.strong("AQ1: Locally Rare Features (LRF)")),
-                            ui.tags.dd("Features with Y ≥ 50% (i.e., ≥50% of total abundance in top 5% subzones)"),
-                            ui.tags.dd(ui.HTML("<code>if Y >= 0.5 then LRF = 1 else LRF = 0</code>")),
-                            
-                            ui.tags.dt(ui.strong("AQ2: Regionally Rare Features (RRF)"), style="margin-top: var(--spacing-sm);"),
-                            ui.tags.dd("Features with 25% ≤ Y < 50%"),
-                            ui.tags.dd(ui.HTML("<code>if 0.25 <= Y < 0.5 then RRF = 1 else RRF = 0</code>")),
-                            
-                            ui.tags.dt(ui.strong("AQ3: Nationally Rare Features (NRF)"), style="margin-top: var(--spacing-sm);"),
-                            ui.tags.dd("Features present in ≤5 subzones"),
-                            ui.tags.dd(ui.HTML("<code>if Z <= 5 then NRF = 1 else NRF = 0</code>")),
-                            style="line-height: 2;"
-                        ),
-                        
-                        ui.hr(),
-                        
-                        ui.h5("AQ4: Regularly Occurring Features (ROF)", style="color: var(--ocean-blue); font-weight: 600; margin-bottom: var(--spacing-sm); margin-top: var(--spacing-md);"),
-                        ui.tags.dl(
-                            ui.tags.dd("Features with Y < 25% AND present in >5 subzones"),
-                            ui.tags.dd(ui.HTML("<code>if Y < 0.25 AND Z > 5 then ROF = 1 else ROF = 0</code>")),
-                            style="line-height: 2;"
-                        ),
-                        
-                        ui.hr(),
-                        
-                        ui.h5("AQ5-AQ8: Ecological Significance", style="color: var(--ocean-blue); font-weight: 600; margin-bottom: var(--spacing-sm); margin-top: var(--spacing-md);"),
-                        ui.tags.dl(
-                            ui.tags.dt(ui.strong("AQ5: Ecologically Significant Features (ESF)")),
-                            ui.tags.dd("User-defined features of ecological importance"),
-                            ui.tags.dd(ui.HTML("<code>ESF = 1 if designated, else 0</code>")),
-                            
-                            ui.tags.dt(ui.strong("AQ6: Habitat Forming Species (HFS)"), style="margin-top: var(--spacing-sm);"),
-                            ui.tags.dd("Species that create structural habitat"),
-                            ui.tags.dd(ui.HTML("<code>HFS = 1 if designated, else 0</code>")),
-                            
-                            ui.tags.dt(ui.strong("AQ7: Biogenic Habitat (BH)"), style="margin-top: var(--spacing-sm);"),
-                            ui.tags.dd("Habitats formed by living organisms"),
-                            ui.tags.dd(ui.HTML("<code>BH = 1 if designated, else 0</code>")),
-                            
-                            ui.tags.dt(ui.strong("AQ8: Symbiotic Species (SS)"), style="margin-top: var(--spacing-sm);"),
-                            ui.tags.dd("Species engaged in symbiotic relationships"),
-                            ui.tags.dd(ui.HTML("<code>SS = 1 if designated, else 0</code>")),
-                            style="line-height: 2;"
-                        ),
-                        style="padding: var(--spacing-md);"
-                    )
-                ),
-                
-                # Right Column - EV Calculation
-                ui.card(
-                    ui.card_header("🧮 Ecological Value (EV) Calculation"),
-                    ui.div(
-                        ui.h5("AQ9: Combined Assessment Score", style="color: var(--success-green); font-weight: 600; margin-bottom: var(--spacing-md);"),
-                        
-                        ui.div(
-                            ui.h6("Step 1: Calculate Feature Presence Matrix (FPM)", style="font-weight: 600;"),
-                            ui.p("For each subzone and feature, determine presence based on AQ1-AQ8:"),
-                            ui.HTML("<code>FPM<sub>i,j</sub> = (Xi<sub>j</sub> / X<sub>j</sub>) × (AQ1 + AQ2 + AQ3 + AQ4 + AQ5 + AQ6 + AQ7 + AQ8)</code>"),
-                            ui.p(
-                                "Where:",
-                                ui.tags.ul(
-                                    ui.tags.li("i = subzone index"),
-                                    ui.tags.li("j = feature index"),
-                                    ui.tags.li("Xi<sub>j</sub> = abundance of feature j in subzone i"),
-                                    ui.tags.li("X<sub>j</sub> = mean abundance of feature j across all subzones"),
-                                ),
-                                style="font-size: 0.9rem; margin-top: 0.5rem;"
-                            ),
-                            class_="info-box",
-                            style="margin-bottom: var(--spacing-md);"
-                        ),
-                        
-                        ui.div(
-                            ui.h6("Step 2: Sum Across Features", style="font-weight: 600;"),
-                            ui.p("For each subzone, sum the FPM values across all features:"),
-                            ui.HTML("<code>AQ9<sub>i</sub> = Σ<sub>j</sub> FPM<sub>i,j</sub></code>"),
-                            ui.p("This gives the total assessment score for each subzone.", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            class_="info-box",
-                            style="margin-bottom: var(--spacing-md);"
-                        ),
-                        
-                        ui.div(
-                            ui.h6("Step 3: Calculate Ecological Value (EV)", style="font-weight: 600;"),
-                            ui.p("Normalize the AQ9 score:"),
-                            ui.HTML("<code>EV<sub>i</sub> = AQ9<sub>i</sub> / n</code>"),
-                            ui.p(
-                                "Where n = number of features being assessed",
-                                style="font-size: 0.9rem; margin-top: 0.5rem;"
-                            ),
-                            style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: var(--spacing-md); border-radius: 8px; border-left: 4px solid var(--success-green);"
-                        ),
-                        
-                        ui.hr(),
-                        
-                        ui.h5("Total EV Across Ecosystem Components", style="color: var(--ocean-blue); font-weight: 600; margin-top: var(--spacing-md); margin-bottom: var(--spacing-sm);"),
-                        ui.p("When assessing multiple Ecosystem Components (ECs):"),
-                        ui.HTML("<code>Total_EV<sub>i</sub> = Σ<sub>k</sub> EV<sub>i,k</sub></code>"),
-                        ui.p(
-                            "Where k represents each ecosystem component (e.g., different species groups or habitats)",
-                            style="font-size: 0.9rem; margin-top: 0.5rem;"
-                        ),
-                        
-                        style="padding: var(--spacing-md);"
-                    )
-                ),
-                width=1/2
-            ),
-            
-            # Calculation Steps Detail
-            ui.card(
-                ui.card_header("🔬 Detailed Calculation Steps"),
-                ui.div(
-                    ui.h5("Complete Workflow", style="color: var(--ocean-blue); font-weight: 600; margin-bottom: var(--spacing-md);"),
-                    
-                    ui.tags.ol(
-                        ui.tags.li(
-                            ui.strong("Data Preparation:"),
-                            ui.tags.ul(
-                                ui.tags.li("Load gridded data with subzones as rows and features as columns"),
-                                ui.tags.li("Calculate X (total mean) for each feature: X<sub>j</sub> = mean(Xi<sub>j</sub>)"),
-                                ui.tags.li("Identify 95th percentile for each feature distribution"),
-                            )
-                        ),
-                        ui.tags.li(
-                            ui.strong("Rarity Assessment (AQ1-AQ3):"),
-                            ui.tags.ul(
-                                ui.tags.li("Calculate Y = (sum of abundance in top 5% subzones) / (total abundance)"),
-                                ui.tags.li("Calculate Z = count of subzones where feature is present"),
-                                ui.tags.li("Apply threshold criteria to determine LRF, RRF, and NRF"),
-                            )
-                        ),
-                        ui.tags.li(
-                            ui.strong("Regular Occurrence (AQ4):"),
-                            ui.tags.ul(
-                                ui.tags.li("Check if Y < 0.25 AND Z > 5"),
-                            )
-                        ),
-                        ui.tags.li(
-                            ui.strong("Ecological Significance (AQ5-AQ8):"),
-                            ui.tags.ul(
-                                ui.tags.li("Apply user-defined classifications for ESF, HFS, BH, SS"),
-                                ui.tags.li("These are binary flags (0 or 1) set during feature configuration"),
-                            )
-                        ),
-                        ui.tags.li(
-                            ui.strong("Feature Presence Matrix (AQ9):"),
-                            ui.tags.ul(
-                                ui.tags.li("For each cell (subzone × feature), calculate: (Xi/X) × Σ(AQ1-AQ8)"),
-                                ui.tags.li("Sum across all features for each subzone"),
-                            )
-                        ),
-                        ui.tags.li(
-                            ui.strong("Final EV:"),
-                            ui.tags.ul(
-                                ui.tags.li("Normalize AQ9 by dividing by number of features"),
-                                ui.tags.li("Aggregate across ecosystem components if needed"),
-                            )
-                        ),
-                        style="line-height: 2.2; font-size: 1rem;"
-                    ),
-                    style="padding: var(--spacing-md);"
-                )
-            ),
-            
-            # Implementation Notes
-            ui.card(
-                ui.card_header("✅ Current Implementation Status - FULLY COMPLETE"),
-                ui.div(
-                    ui.div(
-                        ui.h5("✅ Core EVA Methodology", style="color: var(--success-green); font-weight: 600;"),
-                        ui.tags.ul(
-                            ui.tags.li("✅ Complete AQ1-AQ8 calculations with proper thresholds"),
-                            ui.tags.li("✅ AQ1: Locally Rare Features (Y ≥ 50%)"),
-                            ui.tags.li("✅ AQ2: Regionally Rare Features (25% ≤ Y < 50%)"),
-                            ui.tags.li("✅ AQ3: Nationally Rare Features (Z ≤ 5)"),
-                            ui.tags.li("✅ AQ4: Regularly Occurring Features (Y < 25% AND Z > 5)"),
-                            ui.tags.li("✅ AQ5-AQ8: User-configurable ecological significance flags"),
-                            ui.tags.li("✅ AQ9: Complete Feature Presence Matrix (FPM) calculation"),
-                            ui.tags.li("✅ EV: Normalized Ecological Value per subzone"),
-                        ),
-                        style="margin-bottom: var(--spacing-md);"
-                    ),
-                    ui.div(
-                        ui.h5("✅ Advanced Features", style="color: var(--success-green); font-weight: 600;"),
-                        ui.tags.ul(
-                            ui.tags.li("✅ 95th percentile detection for rarity assessment"),
-                            ui.tags.li("✅ Y/Z/X metrics calculation and display"),
-                            ui.tags.li("✅ Feature configuration interface with checkboxes"),
-                            ui.tags.li("✅ Multiple ecosystem component (EC) support"),
-                            ui.tags.li("✅ EC storage and management system"),
-                            ui.tags.li("✅ Aggregated Total EV across multiple ECs"),
-                            ui.tags.li("✅ Enhanced feature metrics summary table"),
-                            ui.tags.li("✅ Data export functionality"),
-                        ),
-                        style="margin-bottom: var(--spacing-md);"
-                    ),
-                    ui.div(
-                        ui.p(
-                            "🎉 ", ui.strong("Production Ready: "),
-                            "This version implements the complete EVA methodology with all AQ1-AQ9 calculations, "
-                            "proper thresholds, Feature Presence Matrix, and multiple EC support. "
-                            "All formulas match the MARBEFES Phase 2 specification.",
-                            style="margin: 0;"
-                        ),
-                        class_="info-box",
-                        style="background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border-left: 4px solid var(--success-green);"
-                    ),
-                    style="padding: var(--spacing-md);"
-                )
-            ),
-            
-            # Footer Reference
-            ui.div(
-                ui.p(
-                    "📖 ", ui.strong("Reference: "),
-                    "Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA) - Phase 2 Methodology",
-                    style="margin: 0.5rem 0;"
-                ),
-                ui.p(
-                    "🔬 ", ui.strong("Based on: "),
-                    "MARBEFES_EVA-Phase2_template.xlsx calculation sheets",
-                    style="margin: 0.5rem 0;"
-                ),
-                class_="app-footer"
-            )
-        )
-    ),
-    
-    ui.nav_panel(
-        "�📁 Data Input",
+        "📁 Data Input",
         ui.layout_sidebar(
             ui.sidebar(
                 ui.div(
@@ -778,12 +530,7 @@ app_ui = ui.page_navbar(
                 ),
                 ui.hr(),
                 ui.div(
-                    ui.h5("� Stored ECs", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.output_ui("stored_ec_list"),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("�📤 Upload Data", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.h5("📤 Upload Data", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
                     ui.input_file(
                         "upload_data", 
                         "Choose CSV File", 
@@ -862,11 +609,11 @@ A2, 1, 1, 0, ...""",
                     ui.h5("🔧 Configuration", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
                     ui.p("Configure ecosystem component features and their characteristics.", style="line-height: 1.6;"),
                     ui.input_numeric(
-                        "num_features", 
-                        "Number of Features:", 
-                        value=5, 
-                        min=1, 
-                        max=100
+                        "num_features",
+                        "Number of Features:",
+                        value=5,
+                        min=1,
+                        max=MAX_FEATURES
                     ),
                     ui.input_action_button(
                         "apply_features", 
@@ -905,24 +652,9 @@ A2, 1, 1, 0, ...""",
                     ui.div(
                         ui.h4("🎯 Calculated Results", style="color: #006994; font-weight: 600;"),
                         ui.p(
-                            "This section displays Assessment Question (AQ) scores and Ecological Value (EV) for each subzone.",
+                            "This section displays Assessment Question (AQ) scores and Ecological Value (EV) for each subzone. "
+                            "For detailed explanations of all Assessment Questions, visit the Method tab.",
                             style="font-size: 1.05rem; line-height: 1.8;"
-                        ),
-                        ui.div(
-                            ui.h5("📋 Assessment Questions", style="color: #28a745; font-weight: 600; margin-top: 1.5rem;"),
-                            ui.tags.ul(
-                                ui.tags.li("AQ1: Locally rare features (LRF)"),
-                                ui.tags.li("AQ2: Regionally rare features (RRF)"),
-                                ui.tags.li("AQ3: Nationally rare features (NRF)"),
-                                ui.tags.li("AQ4: Regularly occurring features (ROF)"),
-                                ui.tags.li("AQ5: Ecologically significant features (ESF)"),
-                                ui.tags.li("AQ6: Habitat forming species (HFS)"),
-                                ui.tags.li("AQ7: Biogenic habitat (BH)"),
-                                ui.tags.li("AQ8: Symbiotic species (SS)"),
-                                ui.tags.li("AQ9: Combined score"),
-                                style="line-height: 2; column-count: 2; column-gap: 2rem;"
-                            ),
-                            class_="info-box"
                         ),
                         class_="markdown-content"
                     ),
@@ -954,11 +686,17 @@ A2, 1, 1, 0, ...""",
                     ),
                     ui.output_ui("total_ev_ui"),
                     ui.hr(),
-                    ui.download_button(
-                        "download_results", 
-                        "⬇️ Download All Results",
-                        class_="btn-primary",
-                        style="font-size: 1.1rem; padding: 0.8rem 2rem;"
+                    ui.div(
+                        ui.download_button(
+                            "download_results",
+                            "📊 Download Complete Analysis (Excel)",
+                            class_="btn-primary",
+                            style="font-size: 1.1rem; padding: 0.8rem 2rem;"
+                        ),
+                        ui.p(
+                            "Includes: Summary, Metadata, Original Data, AQ Results, Feature Classifications, Methodology Reference",
+                            style="margin-top: 0.5rem; color: #6c757d; font-size: 0.9rem; text-align: center;"
+                        )
                     ),
                     style="padding: 1rem;"
                 )
@@ -974,12 +712,12 @@ A2, 1, 1, 0, ...""",
                 ui.sidebar(
                     ui.h5("🎨 Chart Options", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
                     ui.input_select(
-                        "plot_type", 
-                        "Visualization Type:", 
+                        "plot_type",
+                        "Visualization Type:",
                         choices=["EV by Subzone", "Feature Distribution", "AQ Scores"]
                     ),
                     ui.input_select(
-                        "color_scheme", 
+                        "color_scheme",
                         "Color Scheme:",
                         choices=["Viridis", "Plasma", "Blues", "Greens"]
                     ),
@@ -992,7 +730,42 @@ A2, 1, 1, 0, ...""",
             )
         )
     ),
-    
+
+    ui.nav_panel(
+        "📖 Method",
+        ui.div(
+            ui.div(
+                ui.h2("📖 EVA Methodology Reference", style="color: #006994; font-weight: 700; margin-bottom: 1.5rem;"),
+                ui.p(
+                    "Comprehensive guide to the Ecological Value Assessment framework terminology and methodology.",
+                    style="font-size: 1.1rem; color: #6c757d; margin-bottom: 2rem;"
+                )
+            ),
+
+            # Acronyms Table
+            ui.card(
+                ui.card_header("🔤 EVA Terminology Reference"),
+                ui.div(
+                    ui.output_table("acronyms_table"),
+                    style="padding: 1rem;"
+                )
+            ),
+
+            # Assessment Questions Guide
+            ui.card(
+                ui.card_header("ℹ️ Assessment Questions (AQ) Guide"),
+                ui.div(
+                    ui.p(
+                        "Detailed explanations of all 15 Assessment Questions used in the EVA methodology.",
+                        style="margin-bottom: 1.5rem; font-size: 1.05rem; color: #495057;"
+                    ),
+                    ui.output_ui("aq_guide_content"),
+                    style="padding: 1rem;"
+                )
+            )
+        )
+    ),
+
     title=ui.div(
         ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 35px; margin-right: 10px;">'),
         ui.span("MARBEFES EVA Phase 2", style="font-weight: 700;"),
@@ -1008,28 +781,244 @@ A2, 1, 1, 0, ...""",
 
 # Server logic
 def server(input, output, session):
+
+    # Reactive values for storing data
+    uploaded_data = reactive.Value(None)
+
+    # Store a dictionary of feature classifications from user input
+    feature_classifications = reactive.Value({})
+
+    detected_data_type = reactive.Value(None)
+
+    # GIS reactive values
+    geo_data = reactive.Value(None)  # GeoDataFrame with grid geometries
+    original_crs = reactive.Value(None)  # Original CRS string from uploaded GeoJSON
+    geo_match_info = reactive.Value(None)  # Dict with match statistics
+
+    def detect_data_type(df):
+        """
+        Automatically detect if data is qualitative or quantitative
+
+        Logic:
+        - Qualitative: Binary data (only 0 and 1 values, or very few unique values)
+        - Quantitative: Continuous data (many unique values, decimals, or range > 1)
+        """
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+
+        # Analyze each feature column
+        is_binary_count = 0
+        is_continuous_count = 0
+
+        for col in feature_cols:
+            values = df[col].dropna()
+            if len(values) == 0:
+                continue
+
+            unique_values = values.unique()
+            num_unique = len(unique_values)
+
+            # Check if binary (only 0 and 1)
+            is_binary = set(unique_values).issubset({0, 1, 0.0, 1.0})
+
+            # Check if has decimals
+            try:
+                has_decimals = any(
+                    isinstance(v, (int, float)) and v != int(v)
+                    for v in values if pd.notna(v) and v != 0
+                )
+            except (TypeError, ValueError):
+                has_decimals = False
+
+            # Check value range
+            val_range = values.max() - values.min() if len(values) > 0 else 0
+
+            # Decision logic
+            if is_binary:
+                is_binary_count += 1
+            elif has_decimals or val_range > 1 or num_unique > 10:
+                is_continuous_count += 1
+            else:
+                # Few unique values, likely categorical/qualitative
+                is_binary_count += 1
+
+        # Determine overall data type (default to qualitative if no data)
+        if is_binary_count == 0 and is_continuous_count == 0:
+            return "qualitative"
+        elif is_binary_count > is_continuous_count:
+            return "qualitative"
+        else:
+            return "quantitative"
     
-    # Reactive values for storing data - properly typed
-    uploaded_data = reactive.Value(pd.DataFrame())
-    features_data = reactive.Value(pd.DataFrame()) 
-    results_data = reactive.Value(pd.DataFrame())
-    
-    # Multiple EC support
-    ec_datasets = reactive.Value({})  # Dictionary to store multiple EC datasets
-    current_ec_name = reactive.Value("")  # Currently active EC
-    
-    # AQ5-AQ8 feature classifications
-    aq5_features = reactive.Value([])  # Ecologically Significant Features
-    aq6_features = reactive.Value([])  # Habitat Forming Species
-    aq7_features = reactive.Value([])  # Biogenic Habitat
-    aq8_features = reactive.Value([])  # Symbiotic Species
-    
-    # Acronyms table - using constants
+    # Acronyms table
     @output
     @render.table
     def acronyms_table():
-        return pd.DataFrame(ACRONYMS_DATA)
-    
+        acronyms = {
+            "Acronym": ["EVA", "EV", "EC", "AQ", "LRF", "RRF", "NRF", "ROF", "ESF", "HFS", "BH", "SS"],
+            "Full Name": [
+                "Ecological value assessment",
+                "Ecological value",
+                "Ecosystem component",
+                "Assessment question",
+                "Locally rare feature",
+                "Regionally rare feature",
+                "Nationally rare feature",
+                "Regularly occurring feature",
+                "Ecologically significant feature",
+                "Habitat forming species",
+                "Biogenic habitat",
+                "Symbiotic species"
+            ]
+        }
+        return pd.DataFrame(acronyms)
+
+    # AQ Guide Content
+    @output
+    @render.ui
+    def aq_guide_content():
+        return ui.HTML(get_aq_guide_html())
+
+    def get_aq_guide_html():
+        """Generate comprehensive AQ guide HTML"""
+        return """
+        <div style="line-height: 1.8;">
+            <h4 style="color: #006994; margin-top: 1.5rem; margin-bottom: 1rem;">🔍 Rarity-Based Assessment Questions</h4>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #2196F3;">
+                <h5 style="color: #2196F3; margin-top: 0;"><strong>AQ1</strong> - Locally Rare Features (LRF) - Qualitative</h5>
+                <p><strong>Purpose:</strong> Identifies features that are rare at the local scale.</p>
+                <p><strong>Applies to:</strong> Qualitative (presence/absence) data only</p>
+                <p><strong>Calculation:</strong> Average of rescaled values for features present in ≤5% of subzones</p>
+                <p><strong>Returns NaN when:</strong> No features are locally rare (all occur in >5% of subzones)</p>
+                <p><strong>Higher values indicate:</strong> More locally rare features present in the subzone</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #2196F3;">
+                <h5 style="color: #2196F3; margin-top: 0;"><strong>AQ2</strong> - Locally Rare Features (LRF) - Quantitative</h5>
+                <p><strong>Purpose:</strong> Measures abundance of locally rare features.</p>
+                <p><strong>Applies to:</strong> Quantitative (count/measurement) data only</p>
+                <p><strong>Calculation:</strong> Average abundance of locally rare features</p>
+                <p><strong>Returns NaN when:</strong> Qualitative data or when no LRF exist</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #ff9800;">
+                <h5 style="color: #ff9800; margin-top: 0;"><strong>AQ3</strong> - Regionally Rare Features (RRF) - Qualitative</h5>
+                <p><strong>Purpose:</strong> Identifies features defined as regionally rare.</p>
+                <p><strong>Applies to:</strong> Qualitative data with RRF-classified features</p>
+                <p><strong>Calculation:</strong> Average of rescaled values for RRF-classified features</p>
+                <p><strong>Returns NaN when:</strong> No features classified as RRF</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #ff9800;">
+                <h5 style="color: #ff9800; margin-top: 0;"><strong>AQ4</strong> - Regionally Rare Features (RRF) - Quantitative</h5>
+                <p><strong>Purpose:</strong> Measures abundance of regionally rare features.</p>
+                <p><strong>Applies to:</strong> Quantitative data with RRF-classified features</p>
+                <p><strong>Returns NaN when:</strong> Qualitative data or no RRF</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #d32f2f;">
+                <h5 style="color: #d32f2f; margin-top: 0;"><strong>AQ5</strong> - Nationally Rare Features (NRF) - Qualitative</h5>
+                <p><strong>Purpose:</strong> Highest rarity classification - nationally rare features.</p>
+                <p><strong>Applies to:</strong> Qualitative data with NRF features</p>
+                <p><strong>Returns NaN when:</strong> No features classified as NRF</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #d32f2f;">
+                <h5 style="color: #d32f2f; margin-top: 0;"><strong>AQ6</strong> - Nationally Rare Features (NRF) - Quantitative</h5>
+                <p><strong>Purpose:</strong> Abundance of nationally rare features.</p>
+                <p><strong>Applies to:</strong> Quantitative data with NRF features</p>
+                <p><strong>Returns NaN when:</strong> Qualitative data or no NRF</p>
+            </div>
+
+            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">⭐ General Assessment</h4>
+
+            <div style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #ff9800;">
+                <h5 style="color: #ff9800; margin-top: 0;"><strong>AQ7</strong> - All Features - Qualitative ⭐</h5>
+                <p><strong>Purpose:</strong> Uses ALL features without any classification filter.</p>
+                <p><strong>Applies to:</strong> Qualitative data</p>
+                <p><strong>Special:</strong> ALWAYS ACTIVE for qualitative data - does not require rare features</p>
+                <p><strong>Calculation:</strong> Average of rescaled values for ALL features</p>
+                <p><strong>Why important:</strong> Provides baseline assessment when no features meet special criteria</p>
+            </div>
+
+            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">📍 Occurrence-Based Assessment Questions</h4>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #28a745;">
+                <h5 style="color: #28a745; margin-top: 0;"><strong>AQ8</strong> - Regularly Occurring Features (ROF) - Quantitative</h5>
+                <p><strong>Purpose:</strong> Assesses features that occur regularly (>5% of subzones).</p>
+                <p><strong>Applies to:</strong> Quantitative data only</p>
+                <p><strong>Calculation:</strong> Average abundance of regularly occurring features</p>
+                <p><strong>Returns NaN when:</strong> Qualitative data</p>
+            </div>
+
+            <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #28a745;">
+                <h5 style="color: #28a745; margin-top: 0;"><strong>AQ9</strong> - ROF Concentration-Weighted - Quantitative 🔬</h5>
+                <p><strong>Purpose:</strong> Most complex calculation - identifies spatial hotspots of regularly occurring features.</p>
+                <p><strong>Applies to:</strong> Quantitative data only</p>
+                <p><strong>Special 3-step calculation:</strong></p>
+                <ol style="margin-left: 1.5rem;">
+                    <li><strong>Step 1:</strong> Normalize by mean: <code>value / feature_mean</code></li>
+                    <li><strong>Step 2:</strong> Weight by concentration: <code>(% in top 5% / occurrence count) × normalized_value</code></li>
+                    <li><strong>Step 3:</strong> Rescale to 0-5: <code>5 × weighted / MAX(all_weighted)</code></li>
+                </ol>
+                <p><strong>Returns NaN when:</strong> Qualitative data</p>
+                <p><strong>Higher values indicate:</strong> Subzones with concentrated abundances of regularly occurring features</p>
+            </div>
+
+            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">🌿 Ecological Significance Assessment Questions</h4>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #00b8d4;">
+                <h5 style="color: #00b8d4; margin-top: 0;"><strong>AQ10</strong> - Ecologically Significant Features (ESF) - Qualitative</h5>
+                <p><strong>Purpose:</strong> Identifies keystone species and ecosystem engineers.</p>
+                <p><strong>Examples:</strong> Keystone predators, ecosystem engineers</p>
+                <p><strong>Returns NaN when:</strong> No features classified as ESF</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #00b8d4;">
+                <h5 style="color: #00b8d4; margin-top: 0;"><strong>AQ11</strong> - Ecologically Significant Features (ESF) - Quantitative</h5>
+                <p><strong>Purpose:</strong> Abundance of ecologically important features.</p>
+                <p><strong>Returns NaN when:</strong> Qualitative data or no ESF</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #9c27b0;">
+                <h5 style="color: #9c27b0; margin-top: 0;"><strong>AQ12</strong> - Habitat Forming Species/Biogenic Habitat (HFS/BH) - Qualitative</h5>
+                <p><strong>Purpose:</strong> Features creating habitat structure.</p>
+                <p><strong>Examples:</strong> Corals, seagrasses, oyster reefs, kelp forests, sponge grounds</p>
+                <p><strong>Returns NaN when:</strong> No features classified as HFS/BH</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #9c27b0;">
+                <h5 style="color: #9c27b0; margin-top: 0;"><strong>AQ13</strong> - Habitat Forming Species/Biogenic Habitat (HFS/BH) - Quantitative</h5>
+                <p><strong>Purpose:</strong> Extent of habitat-forming features.</p>
+                <p><strong>Returns NaN when:</strong> Qualitative data or no HFS/BH</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #673ab7;">
+                <h5 style="color: #673ab7; margin-top: 0;"><strong>AQ14</strong> - Symbiotic Species (SS) - Qualitative</h5>
+                <p><strong>Purpose:</strong> Species in symbiotic relationships.</p>
+                <p><strong>Examples:</strong> Mutualistic, commensalistic, or parasitic relationships</p>
+                <p><strong>Returns NaN when:</strong> No features classified as SS</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #673ab7;">
+                <h5 style="color: #673ab7; margin-top: 0;"><strong>AQ15</strong> - Symbiotic Species (SS) - Quantitative</h5>
+                <p><strong>Purpose:</strong> Abundance of symbiotic species.</p>
+                <p><strong>Returns NaN when:</strong> Qualitative data or no SS</p>
+            </div>
+
+            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">📊 EV (Ecological Value) Calculation</h4>
+
+            <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 1.5rem; border-radius: 8px; border-left: 4px solid #2196F3;">
+                <p style="font-size: 1.1rem; margin-bottom: 1rem;"><strong>EV = MAX of applicable AQs (not average or sum!)</strong></p>
+                <p><strong>For Qualitative data:</strong></p>
+                <p style="margin-left: 1.5rem;"><code>EV = MAX(AQ1, AQ3, AQ5, AQ7, AQ10, AQ12, AQ14)</code></p>
+                <p style="margin-top: 1rem;"><strong>For Quantitative data:</strong></p>
+                <p style="margin-left: 1.5rem;"><code>EV = MAX(AQ2, AQ4, AQ6, AQ8, AQ9, AQ11, AQ13, AQ15)</code></p>
+                <p style="margin-top: 1rem; font-style: italic;">⚠️ <strong>Important:</strong> EV takes the MAXIMUM value to ensure that any significant ecological value is captured, even if only one criterion is met.</p>
+            </div>
+        </div>
+        """
+
     # Download CSV template
     @render.download(filename="data_template.csv")
     def download_template():
@@ -1044,84 +1033,129 @@ def server(input, output, session):
         df = pd.DataFrame(template_data)
         return io.StringIO(df.to_csv(index=False))
     
-    # Handle file upload with proper validation
+    # Handle file upload
     @reactive.Effect
     @reactive.event(input.upload_data)
     def handle_upload():
         file_info = input.upload_data()
         if file_info is not None and len(file_info) > 0:
+            file_path = file_info[0]["datapath"]
+
+            # Validate file size
             try:
-                file_path = file_info[0]["datapath"]
-                df = pd.read_csv(file_path)
-                
-                # Validate data structure
-                if df.empty:
-                    print("Warning: Empty CSV file uploaded")
+                file_size_bytes = os.path.getsize(file_path)
+                file_size_mb = file_size_bytes / (1024 * 1024)
+
+                if file_size_mb > MAX_FILE_SIZE_MB:
+                    # File is too large, reset uploaded_data and return
+                    uploaded_data.set(None)
+                    logger.error(f"File size ({file_size_mb:.2f} MB) exceeds maximum allowed size ({MAX_FILE_SIZE_MB} MB)")
                     return
-                
-                if df.shape[1] < 2:
-                    print("Warning: CSV file must have at least 2 columns (Subzone ID + features)")
-                    return
-                
-                uploaded_data.set(df)
-                print(f"Successfully loaded {df.shape[0]} rows × {df.shape[1]} columns")
-                
-                # Store EC dataset if EC name is provided
-                ec_name = input.ec_name()
-                if ec_name and ec_name.strip():
-                    ec_data = ec_datasets.get()
-                    ec_data[ec_name] = {
-                        'data': df,
-                        'results': None,
-                        'aq5': aq5_features.get(),
-                        'aq6': aq6_features.get(),
-                        'aq7': aq7_features.get(),
-                        'aq8': aq8_features.get()
-                    }
-                    ec_datasets.set(ec_data)
-                    current_ec_name.set(ec_name)
-                    print(f"Stored dataset for EC: {ec_name}")
-                
             except Exception as e:
-                print(f"Error loading CSV file: {str(e)}")
-                uploaded_data.set(pd.DataFrame())
+                logger.error(f"Could not check file size: {e}")
+                return
+
+            # Read CSV and handle missing data
+            try:
+                df = pd.read_csv(file_path)
+            except Exception as e:
+                uploaded_data.set(None)
+                logger.error(f"Could not read CSV file: {e}")
+                return
+
+            # Clean up the data:
+            # 1. Replace any string variations of NA/missing with NaN
+            df = df.replace(['NA', 'N/A', 'na', 'n/a', 'null', 'NULL', 'None', ''], np.nan)
+
+            # 2. Ensure Subzone ID column exists and is clean
+            if 'Subzone ID' not in df.columns:
+                possible_id_cols = [col for col in df.columns if 'id' in col.lower() or 'subzone' in col.lower()]
+                if possible_id_cols:
+                    df = df.rename(columns={possible_id_cols[0]: 'Subzone ID'})
+                else:
+                    df['Subzone ID'] = [f"S{i+1}" for i in range(len(df))]
+
+            df = df.dropna(subset=['Subzone ID'])
+            df['Subzone ID'] = df['Subzone ID'].astype(str).str.strip()
+            df = df.drop_duplicates(subset=['Subzone ID'])
+
+            # 3. Convert feature columns to numeric, but preserve NaN
+            feature_cols = [col for col in df.columns if col != 'Subzone ID']
+            for col in feature_cols:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            # 4. Sort by Subzone ID for consistent ordering
+            df = df.sort_values('Subzone ID').reset_index(drop=True)
+
+            uploaded_data.set(df)
+
+            # Automatically detect data type
+            auto_detected_type = detect_data_type(df)
+            detected_data_type.set(auto_detected_type)
+
+            # Update the input selector to the detected type
+            ui.update_select("data_type", selected=auto_detected_type)
     
-    # Display stored EC list
-    @output
-    @render.ui
-    def stored_ec_list():
-        ec_data = ec_datasets.get()
-        if not ec_data or len(ec_data) == 0:
-            return ui.p("No ECs stored yet", style="color: var(--text-muted); font-size: 0.9rem;")
-        
-        return ui.TagList(
-            ui.p(f"✅ {len(ec_data)} EC(s) stored:", style="font-weight: 600; margin-bottom: 0.5rem;"),
-            ui.tags.ul(
-                *[ui.tags.li(f"{ec_name} ({ec_info['data'].shape[0]} rows)", 
-                            style="font-size: 0.9rem; color: var(--ocean-blue);") 
-                  for ec_name, ec_info in ec_data.items()],
-                style="list-style: none; padding-left: 0;"
-            )
-        )
-    
-    # Data preview with improved validation
+    # Data preview
     @output
     @render.ui
     def data_preview_ui():
         df = uploaded_data.get()
-        if df is not None and not df.empty:
+        detected_type = detected_data_type.get()
+
+        if df is not None:
+            # Analyze data characteristics for display
+            feature_cols = [col for col in df.columns if col != 'Subzone ID']
+            unique_values_per_col = [len(df[col].dropna().unique()) for col in feature_cols]
+            avg_unique = np.mean(unique_values_per_col) if unique_values_per_col else 0
+
             return ui.card(
                 ui.card_header("✅ Data Preview"),
                 ui.div(
                     ui.div(
-                        ui.h5(f"📊 Dataset: {df.shape[0]} subzones × {df.shape[1]-1} features", 
-                              style="color: var(--success-green); font-weight: 600; margin-bottom: 1rem;"),
+                        ui.h5(f"📊 Dataset: {df.shape[0]} subzones × {df.shape[1]-1} features",
+                              style="color: #28a745; font-weight: 600; margin-bottom: 1rem;"),
                         ui.p(
                             f"✓ Successfully loaded data with {df.shape[0]} rows and {df.shape[1]} columns",
-                            style="color: var(--text-muted);"
+                            style="color: #6c757d;"
                         ),
                         class_="info-box"
                     ),
+                    ui.div(
+                        ui.h5("🤖 Auto-Detected Data Type", style="color: #006994; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem;"),
+                        ui.div(
+                            ui.div(
+                                ui.h4(
+                                    "📌 " + detected_type.upper() if detected_type else "DETECTING...",
+                                    style=f"color: {'#28a745' if detected_type == 'qualitative' else '#2196F3'}; font-weight: 700; margin: 0;"
+                                ),
+                                ui.p(
+                                    f"Based on analysis of {len(feature_cols)} features",
+                                    style="color: #6c757d; margin: 0.5rem 0 0 0; font-size: 0.9rem;"
+                                ),
+                                style="padding: 1.5rem; background: linear-gradient(135deg, #e3f2fd 0%, #f1f8e9 100%); border-radius: 8px; border-left: 4px solid #2196F3;"
+                            ),
+                            ui.div(
+                                ui.p(
+                                    ui.strong("Detection criteria:"),
+                                    ui.br(),
+                                    f"• Average unique values per feature: {avg_unique:.1f}",
+                                    ui.br(),
+                                    f"• Data range: {df[feature_cols].values.min():.2f} to {df[feature_cols].values.max():.2f}",
+                                    ui.br(),
+                                    "• Qualitative: Binary (0/1) or few unique values",
+                                    ui.br(),
+                                    "• Quantitative: Continuous, decimals, or many unique values",
+                                    style="color: #616161; font-size: 0.9rem; line-height: 1.8; margin-top: 1rem;"
+                                ),
+                                ui.p(
+                                    "💡 You can manually change the data type in the sidebar if needed.",
+                                    style="color: #ff9800; font-weight: 500; margin-top: 1rem; font-size: 0.95rem;"
+                                )
+                            )
+                        )
+                    ),
+                    ui.hr(),
                     ui.output_table("data_preview_table"),
                     style="padding: 1rem;"
                 )
@@ -1133,11 +1167,11 @@ def server(input, output, session):
                     ui.div(
                         ui.p(
                             "⬆️ Please upload a CSV file using the sidebar to get started.",
-                            style="font-size: 1.1rem; text-align: center; color: var(--text-muted); padding: 2rem;"
+                            style="font-size: 1.1rem; text-align: center; color: #6c757d; padding: 2rem;"
                         ),
                         ui.p(
                             "💡 You can download a template file to see the expected format.",
-                            style="text-align: center; color: var(--text-muted);"
+                            style="text-align: center; color: #6c757d;"
                         )
                     )
                 )
@@ -1147,362 +1181,696 @@ def server(input, output, session):
     @render.table
     def data_preview_table():
         df = uploaded_data.get()
-        if df is not None and not df.empty:
-            return df.head(10)
+        if df is not None:
+            return df.head(PREVIEW_ROWS_LIMIT)
         return pd.DataFrame()
-    
-    # Handle AQ5-AQ8 configuration
-    @reactive.Effect
-    @reactive.event(input.apply_aq_config)
-    def handle_aq_config():
-        aq5_features.set(input.aq5_checkboxes() or [])
-        aq6_features.set(input.aq6_checkboxes() or [])
-        aq7_features.set(input.aq7_checkboxes() or [])
-        aq8_features.set(input.aq8_checkboxes() or [])
-        print(f"AQ classifications updated: AQ5={len(aq5_features.get())}, AQ6={len(aq6_features.get())}, AQ7={len(aq7_features.get())}, AQ8={len(aq8_features.get())}")
     
     # Features configuration UI
     @output
     @render.ui
     def features_config_ui():
         df = uploaded_data.get()
-        if df is None or df.empty:
+        if df is None:
             return ui.p("Please upload data first in the Data Input tab.")
+
+        feature_names = df.columns[1:].tolist()
         
-        feature_names = df.columns[1:].tolist()  # Exclude Subzone ID column
-        
-        if not feature_names:
-            return ui.p("No features detected in uploaded data.")
-        
+        feature_rows = []
+        for feature in feature_names:
+            feature_rows.append(
+                ui.row(
+                    ui.column(4, ui.p(ui.strong(feature))),
+                    ui.column(8, ui.input_checkbox_group(
+                        f"class_{feature}",
+                        "",
+                        choices={
+                            "RRF": "RRF (Regionally Rare)",
+                            "NRF": "NRF (Nationally Rare)",
+                            "ESF": "ESF (Ecologically Significant)",
+                            "HFS_BH": "HFS/BH (Habitat Forming)",
+                            "SS": "SS (Symbiotic Species)"
+                        },
+                        inline=True
+                    ))
+                )
+            )
+
         return ui.TagList(
+            ui.p(f"Detected {len(feature_names)} features. Please classify them below:"),
             ui.div(
-                ui.h5("🎯 AQ5-AQ8 Feature Classifications", style="color: var(--ocean-blue); font-weight: 600; margin-bottom: var(--spacing-md);"),
-                ui.p("Configure which features fall into each ecological significance category. These classifications affect the final EV calculations.", 
-                     style="margin-bottom: var(--spacing-lg);"),
-                
-                # AQ5: Ecologically Significant Features
-                ui.div(
-                    ui.h6("AQ5: Ecologically Significant Features (ESF)", style="color: var(--success-green); font-weight: 600; margin-top: var(--spacing-lg);"),
-                    ui.p("Features of particular ecological importance that should be highlighted in assessments.", style="font-size: 0.9rem; color: var(--text-muted);"),
-                    ui.input_checkbox_group(
-                        "aq5_checkboxes",
-                        "",
-                        choices=feature_names,
-                        selected=aq5_features.get(),
-                        inline=False
-                    ),
-                    class_="feature-category"
+                ui.row(
+                    ui.column(4, ui.h5("Feature Name")),
+                    ui.column(8, ui.h5("Classifications"))
                 ),
-                
-                # AQ6: Habitat Forming Species
-                ui.div(
-                    ui.h6("AQ6: Habitat Forming Species (HFS)", style="color: var(--success-green); font-weight: 600; margin-top: var(--spacing-lg);"),
-                    ui.p("Species that create structural habitat for other organisms.", style="font-size: 0.9rem; color: var(--text-muted);"),
-                    ui.input_checkbox_group(
-                        "aq6_checkboxes",
-                        "",
-                        choices=feature_names,
-                        selected=aq6_features.get(),
-                        inline=False
-                    ),
-                    class_="feature-category"
-                ),
-                
-                # AQ7: Biogenic Habitat
-                ui.div(
-                    ui.h6("AQ7: Biogenic Habitat (BH)", style="color: var(--success-green); font-weight: 600; margin-top: var(--spacing-lg);"),
-                    ui.p("Habitats formed by living organisms (e.g., coral reefs, oyster beds).", style="font-size: 0.9rem; color: var(--text-muted);"),
-                    ui.input_checkbox_group(
-                        "aq7_checkboxes",
-                        "",
-                        choices=feature_names,
-                        selected=aq7_features.get(),
-                        inline=False
-                    ),
-                    class_="feature-category"
-                ),
-                
-                # AQ8: Symbiotic Species
-                ui.div(
-                    ui.h6("AQ8: Symbiotic Species (SS)", style="color: var(--success-green); font-weight: 600; margin-top: var(--spacing-lg);"),
-                    ui.p("Species involved in symbiotic relationships with other organisms.", style="font-size: 0.9rem; color: var(--text-muted);"),
-                    ui.input_checkbox_group(
-                        "aq8_checkboxes",
-                        "",
-                        choices=feature_names,
-                        selected=aq8_features.get(),
-                        inline=False
-                    ),
-                    class_="feature-category"
-                ),
-                
-                ui.div(
-                    ui.input_action_button(
-                        "apply_aq_config",
-                        "✓ Apply AQ Classifications",
-                        class_="btn-primary",
-                        style="margin-top: var(--spacing-lg); width: 100%; font-size: 1.1rem; padding: 0.8rem;"
-                    ),
-                    style="margin-top: var(--spacing-lg);"
-                ),
-                
-                class_="aq-config-panel"
+                *feature_rows,
+                style="margin-top: 1.5rem;"
             )
         )
+    
+    @reactive.Effect
+    def _update_feature_classifications():
+        """
+        An effect that triggers whenever a feature classification checkbox changes.
+        It collects all user-defined classifications into a single reactive dictionary.
+        Only runs when data is available to avoid unnecessary processing.
+        """
+        df = uploaded_data.get()
+        if df is None:
+            # Only reset if classifications are not already empty
+            if feature_classifications.get() != {}:
+                feature_classifications.set({})
+            return
+
+        feature_names = df.columns[1:].tolist()
+
+        # Early exit if no features
+        if not feature_names:
+            feature_classifications.set({})
+            return
+
+        current_classifications = {}
+        for feature in feature_names:
+            # The input ID is constructed as f"class_{feature}"
+            try:
+                class_input = getattr(input, f"class_{feature}", None)
+                if class_input is not None:
+                    # Get the selected classifications for the current feature
+                    current_classifications[feature] = class_input()
+                else:
+                    current_classifications[feature] = []
+            except AttributeError:
+                # If input doesn't exist yet, use empty list
+                current_classifications[feature] = []
+
+        # Update the central reactive value
+        feature_classifications.set(current_classifications)
     
     @output
     @render.table
     def features_summary_table():
         df = uploaded_data.get()
-        if df is not None and not df.empty and len(df.columns) > 1:
+        if df is not None:
             feature_names = df.columns[1:].tolist()
             
-            # Calculate feature metrics for display
-            results = calculate_results()
-            feature_metrics_data = []
-            
-            for feature in feature_names:
-                if pd.api.types.is_numeric_dtype(df[feature]):
-                    # Calculate X, Y, Z metrics
-                    X = df[feature].mean()
-                    Z = (df[feature] > 0).sum()
-                    
-                    # Calculate Y (95th percentile threshold)
-                    if len(df) >= 20:
-                        threshold_95 = df[feature].quantile(0.95)
-                        top_5_percent = df[df[feature] >= threshold_95]
-                        Y = (top_5_percent[feature].sum() / df[feature].sum() * 100) if df[feature].sum() > 0 else 0
-                    else:
-                        threshold_80 = df[feature].quantile(0.80)
-                        top_20_percent = df[df[feature] >= threshold_80]
-                        Y = (top_20_percent[feature].sum() / df[feature].sum() * 100) if df[feature].sum() > 0 else 0
-                    
-                    # Get AQ classifications
-                    aq5_list = aq5_features.get()
-                    aq6_list = aq6_features.get()
-                    aq7_list = aq7_features.get()
-                    aq8_list = aq8_features.get()
-                    
-                    classifications = []
-                    if feature in aq5_list:
-                        classifications.append("ESF")
-                    if feature in aq6_list:
-                        classifications.append("HFS")
-                    if feature in aq7_list:
-                        classifications.append("BH")
-                    if feature in aq8_list:
-                        classifications.append("SS")
-                    
-                    feature_metrics_data.append({
-                        "Feature": feature,
-                        "Mean (X)": f"{X:.2f}",
-                        "Occurrences (Z)": Z,
-                        "Top 5% Conc. (Y%)": f"{Y:.1f}%",
-                        "Classifications": ", ".join(classifications) if classifications else "-"
+            # Calculate X, Y, Z metrics for each feature
+            summaries = []
+            for col in feature_names:
+                values = df[col].dropna()
+                if not pd.api.types.is_numeric_dtype(values) or values.empty:
+                    summaries.append({
+                        "Feature Name": col, "X (Mean)": "N/A", "Y (95th Pct %)": "N/A", 
+                        "Z (Occurrence)": "N/A", "Count": "N/A", "Average": "N/A"
                     })
-            
-            return pd.DataFrame(feature_metrics_data)
+                    continue
+
+                mean_val = values.mean()
+                
+                # 95th percentile of positive values
+                positive_values = values[values > 0]
+                if not positive_values.empty:
+                    percentile_95 = np.percentile(positive_values, 95)
+                    sum_top_5_percent = values[values >= percentile_95].sum()
+                    total_sum = values.sum()
+                    y_metric = (sum_top_5_percent / total_sum * 100) if total_sum > 0 else 0
+                else:
+                    y_metric = 0
+
+                z_metric = (values > 0).sum()
+                
+                summaries.append({
+                    "Feature Name": col,
+                    "X (Mean)": f"{mean_val:.2f}",
+                    "Y (95th Pct %)": f"{y_metric:.2f}%",
+                    "Z (Occurrence)": z_metric,
+                    "Count": f"{values.sum():.2f}",
+                    "Average": f"{mean_val:.2f}"
+                })
+
+            return pd.DataFrame(summaries)
         return pd.DataFrame()
-    
-    # Calculate results with improved validation and efficiency
+
+    def rescale_qualitative(df):
+        """
+        Rescale qualitative (binary) data to 0-MAX_EV_SCALE scale
+        For presence/absence data: presence (1) = MAX_EV_SCALE, absence (0) = 0
+        Handles NaN by replacing with 0
+        """
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+        rescaled = df.copy()
+
+        for col in feature_cols:
+            # Fill any NaN with 0 first
+            values = df[col].fillna(0)
+
+            # Simple rescaling: 1 -> MAX_EV_SCALE, 0 -> 0
+            rescaled[col] = values * MAX_EV_SCALE
+
+            # Ensure no NaN in output
+            rescaled[col] = rescaled[col].fillna(0)
+
+        return rescaled
+
+    def rescale_quantitative(df):
+        """
+        Rescale quantitative data to 0-MAX_EV_SCALE scale using min-max normalization
+        Formula: MAX_EV_SCALE * (value - min) / (max - min)
+        Handles NaN by replacing with 0
+        """
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+        rescaled = df.copy()
+
+        for col in feature_cols:
+            # Fill any NaN with 0 first
+            values = df[col].fillna(0)
+
+            # Calculate min and max (skipna=True by default, but we already filled NaN)
+            min_val = values.min()
+            max_val = values.max()
+
+            # Check for division by zero and handle NaN
+            if pd.isna(min_val) or pd.isna(max_val):
+                # If still NaN, set to 0
+                rescaled[col] = 0
+            elif max_val > min_val:
+                # Rescale to 0-MAX_EV_SCALE
+                rescaled[col] = MAX_EV_SCALE * (values - min_val) / (max_val - min_val)
+
+                # Ensure no NaN in output
+                rescaled[col] = rescaled[col].fillna(0)
+            else:
+                # All values are the same
+                rescaled[col] = 0
+
+        return rescaled
+
+    def classify_features(df, user_classifications):
+        """
+        Classify features based on intrinsic properties (LRF, ROF) and user input.
+        
+        Args:
+            df (pd.DataFrame): The input data.
+            user_classifications (dict): A dictionary from the reactive value 
+                                         holding user-defined classifications.
+        """
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+        classifications = {
+            'LRF': {}, 'ROF': {}, 'RRF': {}, 'NRF': {}, 
+            'ESF': {}, 'HFS_BH': {}, 'SS': {}
+        }
+
+        for col in feature_cols:
+            # Intrinsic classification based on data
+            positive_count = (df[col] > 0).sum()
+            total_count = df[col].notna().sum()
+            proportion = positive_count / total_count if total_count > 0 else 0
+
+            is_lrf = 1 if proportion > 0 and proportion <= LOCALLY_RARE_THRESHOLD else 0
+            classifications['LRF'][col] = is_lrf
+            classifications['ROF'][col] = 1 - is_lrf
+
+            # User-defined classifications
+            user_settings = user_classifications.get(col, [])
+            classifications['RRF'][col] = 1 if "RRF" in user_settings else 0
+            classifications['NRF'][col] = 1 if "NRF" in user_settings else 0
+            classifications['ESF'][col] = 1 if "ESF" in user_settings else 0
+            classifications['HFS_BH'][col] = 1 if "HFS_BH" in user_settings else 0
+            classifications['SS'][col] = 1 if "SS" in user_settings else 0
+
+        return classifications
+
+    def calculate_aq9_special(df, classifications):
+        """
+        Calculate AQ9 special 3-step concentration-weighted values
+        Step 1: Normalize by mean
+        Step 2: Apply concentration ratio
+        Step 3: Rescale to 0-MAX_EV_SCALE
+        Handles NaN by replacing with 0
+        """
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+        aq9_rescaled = pd.DataFrame(index=df.index)
+        aq9_rescaled['Subzone ID'] = df['Subzone ID']
+
+        for col in feature_cols:
+            if classifications['ROF'][col] == 1:
+                # Step 1: Calculate concentration metrics
+                # Fill NaN with 0 first
+                values = df[col].fillna(0)
+                mean_val = values.mean()
+
+                if mean_val == 0 or pd.isna(mean_val):
+                    aq9_rescaled[col] = 0
+                    continue
+
+                # Step 2: Normalize by mean (with safety check)
+                try:
+                    normalized = values / mean_val
+                except (ZeroDivisionError, FloatingPointError):
+                    aq9_rescaled[col] = 0
+                    continue
+
+                # Step 3: Calculate concentration weighting
+                # Find 95th percentile
+                positive_values = values[values > 0]
+                if len(positive_values) > 0:
+                    try:
+                        percentile_95 = np.percentile(positive_values, PERCENTILE_95)
+                        sum_top_5_percent = values[values >= percentile_95].sum()
+                        total_sum = values.sum()
+
+                        # Y metric: percentage in top 5% (with division safety)
+                        y_metric = (sum_top_5_percent / total_sum) if total_sum > 0 else 0
+
+                        # Z metric: occurrence count
+                        z_metric = (values > 0).sum()
+
+                        # Concentration ratio (with division safety)
+                        concentration_ratio = (y_metric / z_metric) if z_metric > 0 else 0
+
+                        # Apply concentration weighting
+                        weighted = normalized * concentration_ratio
+                    except (ZeroDivisionError, FloatingPointError, ValueError):
+                        weighted = normalized * 0
+                else:
+                    weighted = normalized * 0
+
+                aq9_rescaled[col] = weighted
+            else:
+                aq9_rescaled[col] = 0
+
+        # Step 4: Rescale all weighted values to 0-MAX_EV_SCALE range
+        for col in feature_cols:
+            if classifications['ROF'][col] == 1:
+                max_weighted = aq9_rescaled[col].max()
+                if max_weighted > 0 and not pd.isna(max_weighted):
+                    try:
+                        aq9_rescaled[col] = MAX_EV_SCALE * aq9_rescaled[col] / max_weighted
+                    except (ZeroDivisionError, FloatingPointError):
+                        aq9_rescaled[col] = 0
+                else:
+                    aq9_rescaled[col] = 0
+
+        return aq9_rescaled
+
+    def calculate_all_aqs(df, data_type, rescaled_qual, rescaled_quant, aq9_rescaled, classifications):
+        """Calculate all 15 Assessment Questions (AQ1-AQ15) in a refactored way."""
+        results = pd.DataFrame(index=df.index)
+        results['Subzone ID'] = df['Subzone ID']
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+
+        # Define AQ properties
+        aq_map = {
+            'AQ1': {'type': 'qualitative', 'features': 'LRF', 'df': rescaled_qual},
+            'AQ2': {'type': 'quantitative', 'features': 'LRF', 'df': rescaled_quant},
+            'AQ3': {'type': 'qualitative', 'features': 'RRF', 'df': rescaled_qual},
+            'AQ4': {'type': 'quantitative', 'features': 'RRF', 'df': rescaled_quant},
+            'AQ5': {'type': 'qualitative', 'features': 'NRF', 'df': rescaled_qual},
+            'AQ6': {'type': 'quantitative', 'features': 'NRF', 'df': rescaled_quant},
+            'AQ7': {'type': 'qualitative', 'features': 'ALL', 'df': rescaled_qual},
+            'AQ8': {'type': 'quantitative', 'features': 'ROF', 'df': rescaled_quant},
+            'AQ9': {'type': 'quantitative', 'features': 'ROF', 'df': aq9_rescaled},
+            'AQ10': {'type': 'qualitative', 'features': 'ESF', 'df': rescaled_qual},
+            'AQ11': {'type': 'quantitative', 'features': 'ESF', 'df': rescaled_quant},
+            'AQ12': {'type': 'qualitative', 'features': 'HFS_BH', 'df': rescaled_qual},
+            'AQ13': {'type': 'quantitative', 'features': 'HFS_BH', 'df': rescaled_quant},
+            'AQ14': {'type': 'qualitative', 'features': 'SS', 'df': rescaled_qual},
+            'AQ15': {'type': 'quantitative', 'features': 'SS', 'df': rescaled_quant},
+        }
+
+        for aq, props in aq_map.items():
+            if data_type == props['type']:
+                rescaled_df = props['df']
+                feature_type = props['features']
+                
+                # Get the list of features that match the classification for this AQ
+                if feature_type == 'ALL':
+                    matching_features = feature_cols
+                else:
+                    matching_features = [
+                        col for col in feature_cols 
+                        if classifications[feature_type].get(col) == 1
+                    ]
+
+                if not matching_features:
+                    results[aq] = np.nan
+                    continue
+
+                # Select only the data for the matching features
+                try:
+                    aq_data = rescaled_df[matching_features]
+
+                    # Calculate the mean across the row for the selected features
+                    # Replace any NaN values with 0 before calculating mean
+                    aq_data_clean = aq_data.fillna(0)
+
+                    # Calculate mean across columns (axis=1)
+                    results[aq] = aq_data_clean.mean(axis=1)
+
+                    # If all values in a row are 0, keep it as 0 (not NaN)
+                    results[aq] = results[aq].fillna(0)
+                except Exception as e:
+                    logger.error(f"Error calculating {aq}: {e}")
+                    results[aq] = 0
+            else:
+                results[aq] = np.nan
+
+        return results
+
+    def calculate_ev(aq_results, data_type):
+        """Calculate EV as MAX of appropriate AQs based on data type"""
+        ev_values = []
+
+        for idx in aq_results.index:
+            if data_type == "qualitative":
+                # EV = MAX(AQ1, AQ3, AQ5, AQ7, AQ10, AQ12, AQ14)
+                aq_cols = ['AQ1', 'AQ3', 'AQ5', 'AQ7', 'AQ10', 'AQ12', 'AQ14']
+            elif data_type == "quantitative":
+                # EV = MAX(AQ2, AQ4, AQ6, AQ8, AQ9, AQ11, AQ13, AQ15)
+                aq_cols = ['AQ2', 'AQ4', 'AQ6', 'AQ8', 'AQ9', 'AQ11', 'AQ13', 'AQ15']
+            else:
+                ev_values.append(0)
+                continue
+
+            # Get values, treating NaN as 0
+            values = []
+            for col in aq_cols:
+                val = aq_results.loc[idx, col]
+                if pd.notna(val) and val != 0:
+                    values.append(val)
+
+            # Calculate max, defaulting to 0 if no valid values
+            ev_values.append(np.max(values) if values else 0)
+
+        return ev_values
+
+    # Main calculation function
     @reactive.Calc
     def calculate_results():
         df = uploaded_data.get()
-        if df is None or df.empty or len(df.columns) < 2:
-            return pd.DataFrame()
-        
+
+        if df is None:
+            return None
+
+        data_type = input.data_type()
+        if data_type == "TO SPECIFY":
+            return None
+
+        # Get user classifications (can be empty, will default to empty dict)
+        user_classifications = feature_classifications.get()
+        if user_classifications is None:
+            user_classifications = {}
+
+        # Step 1: Rescale data
+        rescaled_qual = rescale_qualitative(df)
+        rescaled_quant = rescale_quantitative(df)
+
+        # Step 2: Classify features using data and user input
+        classifications = classify_features(df, user_classifications)
+
+        # Step 3: Calculate AQ9 special rescaling
+        aq9_rescaled = calculate_aq9_special(df, classifications)
+
+        # Step 4: Calculate all AQs
+        aq_results = calculate_all_aqs(df, data_type, rescaled_qual, rescaled_quant, aq9_rescaled, classifications)
+
+        # Step 5: Calculate EV
+        aq_results['EV'] = calculate_ev(aq_results, data_type)
+
+        # Combine with original data for a full results set
+        # Validate that both dataframes are not empty and have matching indices
         try:
-            # Create a copy for results
-            results = df.copy()
-            
-            # Get feature columns (exclude first column which should be Subzone ID)
-            feature_cols = df.columns[1:].tolist()
-            
-            # Only process numeric columns for calculations
-            numeric_cols = [col for col in feature_cols if pd.api.types.is_numeric_dtype(df[col])]
-            
-            if not numeric_cols:
-                results['AQ_Score'] = 0
-                results['EV'] = 0
-                return results
-            
-            # Initialize AQ columns
-            for i in range(1, 9):
-                results[f'AQ{i}'] = 0
-            
-            # Calculate metrics for each feature
-            feature_metrics = {}
-            for feature in numeric_cols:
-                # X: Mean abundance across all subzones
-                X = df[feature].mean()
-                
-                # Z: Number of occurrences (subzones where feature > 0)
-                Z = (df[feature] > 0).sum()
-                
-                # Y: Percentage of abundance in top 5% subzones
-                # First, find the 95th percentile threshold for abundance
-                if len(df) >= 20:  # Need enough data for meaningful percentiles
-                    threshold_95 = df[feature].quantile(0.95)
-                    # Get subzones in top 5% (above 95th percentile)
-                    top_5_percent = df[df[feature] >= threshold_95]
-                    if len(top_5_percent) > 0:
-                        Y = top_5_percent[feature].sum() / df[feature].sum() if df[feature].sum() > 0 else 0
-                    else:
-                        Y = 0
-                else:
-                    # For small datasets, use top 20% as approximation
-                    threshold_80 = df[feature].quantile(0.80)
-                    top_20_percent = df[df[feature] >= threshold_80]
-                    Y = top_20_percent[feature].sum() / df[feature].sum() if df[feature].sum() > 0 else 0
-                
-                feature_metrics[feature] = {'X': X, 'Y': Y, 'Z': Z}
-                
-                # Calculate AQ1-AQ4 for each feature
-                # AQ1: Locally Rare Features (Y >= 0.5)
-                if Y >= 0.5:
-                    results[f'AQ1_{feature}'] = 1
-                else:
-                    results[f'AQ1_{feature}'] = 0
-                
-                # AQ2: Regionally Rare Features (0.25 <= Y < 0.5)
-                if 0.25 <= Y < 0.5:
-                    results[f'AQ2_{feature}'] = 1
-                else:
-                    results[f'AQ2_{feature}'] = 0
-                
-                # AQ3: Nationally Rare Features (Z <= 5)
-                if Z <= 5:
-                    results[f'AQ3_{feature}'] = 1
-                else:
-                    results[f'AQ3_{feature}'] = 0
-                
-                # AQ4: Regularly Occurring Features (Y < 0.25 AND Z > 5)
-                if Y < 0.25 and Z > 5:
-                    results[f'AQ4_{feature}'] = 1
-                else:
-                    results[f'AQ4_{feature}'] = 0
-            
-            # Calculate AQ5-AQ8 (user-defined classifications)
-            aq5_list = aq5_features.get()
-            aq6_list = aq6_features.get()
-            aq7_list = aq7_features.get()
-            aq8_list = aq8_features.get()
-            
-            for feature in numeric_cols:
-                results[f'AQ5_{feature}'] = 1 if feature in aq5_list else 0  # Ecologically Significant Features
-                results[f'AQ6_{feature}'] = 1 if feature in aq6_list else 0  # Habitat Forming Species
-                results[f'AQ7_{feature}'] = 1 if feature in aq7_list else 0  # Biogenic Habitat
-                results[f'AQ8_{feature}'] = 1 if feature in aq8_list else 0  # Symbiotic Species
-            
-            # Calculate Feature Presence Matrix (FPM) and AQ9 for each subzone
-            results['AQ9'] = 0.0
-            
-            for idx in results.index:
-                fpm_sum = 0.0
-                row = results.loc[idx]
-                for feature in numeric_cols:
-                    # FPM = (Xi/X) * sum(AQ1-AQ8)
-                    Xi = row[feature]
-                    X = feature_metrics[feature]['X']
-                    
-                    if X > 0:
-                        abundance_ratio = Xi / X
-                    else:
-                        abundance_ratio = 0
-                    
-                    # Sum AQ1-AQ8 for this feature
-                    aq_sum = (row[f'AQ1_{feature}'] + row[f'AQ2_{feature}'] + row[f'AQ3_{feature}'] + 
-                             row[f'AQ4_{feature}'] + row[f'AQ5_{feature}'] + row[f'AQ6_{feature}'] + 
-                             row[f'AQ7_{feature}'] + row[f'AQ8_{feature}'])
-                    
-                    fpm = abundance_ratio * aq_sum
-                    fpm_sum += fpm
-                
-                results.at[idx, 'AQ9'] = fpm_sum
-            
-            # Calculate EV (Ecological Value)
-            n_features = len(numeric_cols)
-            results['EV'] = results['AQ9'] / n_features if n_features > 0 else 0
-            
-            # Calculate individual AQ scores (sum of each AQ type across features)
-            for i in range(1, 9):
-                aq_cols = [f'AQ{i}_{feature}' for feature in numeric_cols if f'AQ{i}_{feature}' in results.columns]
-                if aq_cols:
-                    results[f'AQ{i}'] = results[aq_cols].sum(axis=1)
-            
+            if df.empty or aq_results.empty:
+                return None
+
+            # Ensure both DataFrames have the same index (Subzone ID)
+            df_indexed = df.set_index('Subzone ID')
+            aq_results_indexed = aq_results.set_index('Subzone ID')
+
+            # Reindex both DataFrames to ensure they have the same subzones
+            # Use union of all subzones to handle missing data
+            all_subzones = df_indexed.index.union(aq_results_indexed.index)
+            df_indexed = df_indexed.reindex(all_subzones, fill_value=0)
+            aq_results_indexed = aq_results_indexed.reindex(all_subzones, fill_value=np.nan)
+
+            # Now concatenate with matching indices
+            results = pd.concat([df_indexed, aq_results_indexed], axis=1).reset_index()
+            results.rename(columns={'index': 'Subzone ID'}, inplace=True)
+
+            # Fill any remaining NaN values in AQ columns with 0
+            aq_cols = [col for col in results.columns if col.startswith('AQ') or col == 'EV']
+            results[aq_cols] = results[aq_cols].fillna(0)
+
             return results
-            
-        except Exception as e:
-            print(f"Error calculating results: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return pd.DataFrame()
-    
-    # Results UI with consistent styling
+        except (KeyError, ValueError, IndexError) as e:
+            # Log error and return None if concatenation fails
+            logger.error(f"Error in DataFrame concatenation: {e}")
+            logger.debug(f"df shape: {df.shape if df is not None else 'None'}")
+            logger.debug(f"aq_results shape: {aq_results.shape if aq_results is not None else 'None'}")
+            return None
+
+    # Results UI
     @output
     @render.ui
     def results_ui():
+        df = uploaded_data.get()
+        data_type = input.data_type()
         results = calculate_results()
-        if results is not None and not results.empty:
+
+        if df is None:
+            return ui.div(
+                ui.card(
+                    ui.card_header("⚠️ No Data Uploaded"),
+                    ui.div(
+                        ui.p(
+                            "🔴 Please upload data first!",
+                            style="font-size: 1.2rem; text-align: center; color: #d32f2f; font-weight: 600; padding: 1rem; margin-bottom: 1rem;"
+                        ),
+                        ui.p(
+                            ui.br(),
+                            "1. Go to the 'Data Input' tab",
+                            ui.br(),
+                            "2. Upload your CSV file",
+                            ui.br(),
+                            "3. Select the data type (qualitative or quantitative)",
+                            ui.br(),
+                            "4. Return to this tab to view results",
+                            style="text-align: center; color: #6c757d; line-height: 2;"
+                        )
+                    )
+                )
+            )
+
+        if data_type == "TO SPECIFY":
+            return ui.div(
+                ui.card(
+                    ui.card_header("⚠️ Data Type Not Selected", style="background: linear-gradient(135deg, #ff9800 0%, #ff5722 100%);"),
+                    ui.div(
+                        ui.p(
+                            "🔴 Please select a data type to proceed with analysis!",
+                            style="font-size: 1.2rem; text-align: center; color: #d32f2f; font-weight: 600; padding: 1rem; margin-bottom: 1rem;"
+                        ),
+                        ui.p(
+                            "Your data has been uploaded successfully, but you need to specify the data type:",
+                            style="font-size: 1.1rem; text-align: center; color: #6c757d; padding: 1rem;"
+                        ),
+                        ui.div(
+                            ui.p(
+                                "👉 Go to the 'Data Input' tab",
+                                ui.br(),
+                                "👉 In the sidebar, change 'Data Type' from 'TO SPECIFY' to:",
+                                ui.br(),
+                                "   • ", ui.strong("qualitative"), " - for presence/absence data (0 or 1)",
+                                ui.br(),
+                                "   • ", ui.strong("quantitative"), " - for continuous numerical data",
+                                style="text-align: left; color: #424242; line-height: 2.2; font-size: 1.05rem; padding: 1rem; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;"
+                            ),
+                            style="max-width: 600px; margin: 0 auto;"
+                        ),
+                        ui.p(
+                            "Then return to this tab to view your analysis results.",
+                            style="font-size: 1rem; text-align: center; color: #6c757d; padding: 1rem; margin-top: 1rem;"
+                        )
+                    )
+                )
+            )
+
+        if results is not None:
+            # Analyze which AQs have values
+            aq_cols = [col for col in results.columns if col.startswith('AQ')]
+            non_nan_aqs = [col for col in aq_cols if not results[col].isna().all()]
+            all_nan_aqs = [col for col in aq_cols if results[col].isna().all()]
+
             return ui.TagList(
                 ui.div(
-                    ui.h5(f"✅ Analysis Complete: {len(results)} subzones analyzed", 
-                          style="color: var(--success-green); font-weight: 600; margin-bottom: var(--spacing-md);"),
+                    ui.h5(f"✅ Analysis Complete: {len(results)} subzones analyzed",
+                          style="color: #28a745; font-weight: 600; margin-bottom: 1.5rem;"),
                     class_="info-box"
                 ),
-                create_info_card("Detailed Results Table", ui.output_table("results_table"), "📊")
+                ui.div(
+                    ui.h5("📋 Assessment Questions Summary", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.div(
+                        ui.p(
+                            ui.strong(f"Data Type: {data_type.upper()}"),
+                            style="font-size: 1.1rem; color: #2196F3; margin-bottom: 0.5rem;"
+                        ),
+                        ui.p(
+                            f"✅ Active AQs ({len(non_nan_aqs)}): {', '.join(non_nan_aqs) if non_nan_aqs else 'None'}",
+                            style="color: #28a745; margin: 0.5rem 0;"
+                        ),
+                        ui.p(
+                            f"⚠️ Inactive AQs ({len(all_nan_aqs)}): {', '.join(all_nan_aqs) if all_nan_aqs else 'None'}",
+                            style="color: #ff9800; margin: 0.5rem 0;"
+                        ),
+                        style="padding: 1rem; background: linear-gradient(135deg, #e3f2fd 0%, #f1f8e9 100%); border-radius: 8px; margin-bottom: 1.5rem;"
+                    )
+                ),
+                ui.hr(),
+                ui.h5("📊 Results Table", style="color: #006994; font-weight: 600; margin: 1.5rem 0 1rem 0;"),
+                ui.output_ui("results_table_with_tooltips")
             )
+
         return ui.div(
             ui.p(
-                "⚠️ No results to display. Please upload data in the Data Input tab first.",
-                style="font-size: 1.1rem; text-align: center; color: var(--text-muted); padding: var(--spacing-lg);"
+                "⚠️ Unable to calculate results. Please check your data and settings.",
+                style="font-size: 1.1rem; text-align: center; color: #6c757d; padding: 2rem;"
             )
         )
-    
+
+    # Define tooltips for each AQ
+    def get_aq_tooltip(aq_name):
+        tooltips = {
+            "AQ1": "Locally Rare Features (LRF) - Qualitative | Average of rescaled values for features in ≤5% of subzones | Returns NaN when no features are locally rare",
+            "AQ2": "Locally Rare Features (LRF) - Quantitative | Average abundance of locally rare features | Returns NaN for qualitative data or when no LRF exist",
+            "AQ3": "Regionally Rare Features (RRF) - Qualitative | Average of rescaled values for RRF-classified features | Returns NaN when no RRF features defined",
+            "AQ4": "Regionally Rare Features (RRF) - Quantitative | Average abundance of regionally rare features | Returns NaN for qualitative data or no RRF",
+            "AQ5": "Nationally Rare Features (NRF) - Qualitative | Average of rescaled values for NRF features | Highest rarity classification",
+            "AQ6": "Nationally Rare Features (NRF) - Quantitative | Average abundance of nationally rare features | Returns NaN for qualitative data or no NRF",
+            "AQ7": "All Features - Qualitative ⭐ | Average of ALL features (no filter) | ALWAYS ACTIVE for qualitative data",
+            "AQ8": "Regularly Occurring Features (ROF) - Quantitative | Average abundance of features in >5% of subzones | Returns NaN for qualitative data",
+            "AQ9": "ROF Concentration-Weighted - Quantitative 🔬 | Complex 3-step calculation considering spatial concentration | Identifies hotspots",
+            "AQ10": "Ecologically Significant Features (ESF) - Qualitative | Keystone species, ecosystem engineers | Returns NaN when no ESF defined",
+            "AQ11": "Ecologically Significant Features (ESF) - Quantitative | Abundance of ecologically significant features | Returns NaN for qualitative or no ESF",
+            "AQ12": "Habitat Forming Species/Biogenic Habitat (HFS/BH) - Qualitative | Features creating habitat structure (corals, seagrasses, etc.) | Returns NaN when no HFS/BH defined",
+            "AQ13": "Habitat Forming Species/Biogenic Habitat (HFS/BH) - Quantitative | Extent of habitat-forming features | Returns NaN for qualitative or no HFS/BH",
+            "AQ14": "Symbiotic Species (SS) - Qualitative | Species in symbiotic relationships | Returns NaN when no SS defined",
+            "AQ15": "Symbiotic Species (SS) - Quantitative | Abundance of symbiotic species | Returns NaN for qualitative or no SS",
+            "EV": "Ecological Value | MAX of applicable AQs (not average!) | Qualitative: MAX(AQ1,3,5,7,10,12,14) | Quantitative: MAX(AQ2,4,6,8,9,11,13,15)"
+        }
+        return tooltips.get(aq_name, "")
+
     @output
-    @render.table
-    def results_table():
+    @render.ui
+    def results_table_with_tooltips():
         results = calculate_results()
-        if results is not None and not results.empty and 'EV' in results.columns:
-            # Show subzone ID, individual AQ scores, AQ9, and EV
-            display_cols = [results.columns[0]]  # Subzone ID
-            aq_cols = [f'AQ{i}' for i in range(1, 10) if f'AQ{i}' in results.columns]
-            display_cols.extend(aq_cols)
-            display_cols.append('EV')
-            return results[display_cols].head(20)
-        return pd.DataFrame()
+        if results is None:
+            return ui.div()
+
+        # Show Subzone ID, all AQ columns, and EV
+        aq_cols = [col for col in results.columns if col.startswith('AQ') or col == 'EV']
+        display_cols = ['Subzone ID'] + aq_cols
+
+        # Create display dataframe
+        display_df = results[display_cols].head(RESULTS_DISPLAY_LIMIT).copy()
+
+        # Do NOT replace NaN values; keep them as NaN so we can display NA/empty in the table
+        # display_df = display_df.fillna(0)
+
+        # Round numeric columns to 3 decimal places
+        numeric_cols = display_df.select_dtypes(include=[np.number]).columns
+        display_df[numeric_cols] = display_df[numeric_cols].round(3)
+
+        # Build HTML table with Bootstrap tooltips
+        html = """
+        <style>
+            .tooltip-table {
+                width: 100%;
+                border-collapse: collapse;
+                font-size: 0.9rem;
+            }
+            .tooltip-table th {
+                background: linear-gradient(135deg, #006994 0%, #4da6ff 100%);
+                color: white;
+                padding: 12px 8px;
+                text-align: left;
+                font-weight: 600;
+            }
+            .tooltip-table th.has-tooltip {
+                cursor: help;
+            }
+            .tooltip-table th:hover {
+                background: linear-gradient(135deg, #00527a 0%, #0088cc 100%);
+            }
+            .tooltip-table td {
+                padding: 10px 8px;
+                border-bottom: 1px solid #dee2e6;
+            }
+            .tooltip-table tr:hover {
+                background-color: rgba(0, 184, 212, 0.1);
+            }
+        </style>
+        <table class="tooltip-table">
+            <thead>
+                <tr>
+        """
+
+        # Add headers with Bootstrap tooltips
+        for col in display_cols:
+            tooltip = get_aq_tooltip(col)
+            if tooltip:
+                # Use Bootstrap tooltip with data-bs attributes
+                escaped_tooltip = tooltip.replace('"', '&quot;')
+                html += f'<th class="has-tooltip" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" title="{escaped_tooltip}">{col}</th>'
+            else:
+                html += f'<th>{col}</th>'
+
+        html += """
+                </tr>
+            </thead>
+            <tbody>
+        """
+
+        # Add data rows
+        for idx, row in display_df.iterrows():
+            html += "<tr>"
+            for col in display_cols:
+                value = row[col]
+                if pd.isna(value):
+                    # Display NA for missing values
+                    html += '<td style="color: #999; font-style: italic; text-align: center;">NA</td>'
+                elif isinstance(value, (int, float)):
+                    # Format numbers nicely
+                    html += f'<td>{value}</td>'
+                else:
+                    html += f'<td>{value}</td>'
+            html += "</tr>"
+
+        html += """
+            </tbody>
+        </table>
+        <script>
+            // Initialize Bootstrap tooltips
+            (function() {
+                // Wait a bit for the table to be fully rendered
+                setTimeout(function() {
+                    var tooltipTriggerList = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+                    var tooltipList = Array.from(tooltipTriggerList).map(function (tooltipTriggerEl) {
+                        return new bootstrap.Tooltip(tooltipTriggerEl, {
+                            trigger: 'hover',
+                            delay: { show: 100, hide: 100 }
+                        });
+                    });
+                }, 100);
+            })();
+        </script>
+        """
+
+        return ui.HTML(html)
     
-    # Total EV UI with improved validation and multiple EC support
+    # Total EV UI
     @output
     @render.ui
     def total_ev_ui():
         results = calculate_results()
-        ec_data = ec_datasets.get()
-        
-        # Check if we have multiple ECs stored
-        if ec_data and len(ec_data) > 1:
-            # Aggregate multiple ECs
-            return ui.TagList(
-                ui.card(
-                    ui.card_header("📊 Multiple Ecosystem Components Summary"),
-                    ui.div(
-                        ui.h5(f"🌊 {len(ec_data)} Ecosystem Components Loaded", 
-                              style="color: var(--ocean-blue); font-weight: 600; margin-bottom: var(--spacing-md);"),
-                        ui.tags.ul(
-                            *[ui.tags.li(f"{ec_name}: {ec_info['data'].shape[0]} subzones × {ec_info['data'].shape[1]-1} features") 
-                              for ec_name, ec_info in ec_data.items()],
-                            style="line-height: 2;"
-                        ),
-                        class_="info-box"
-                    )
-                ),
-                ui.hr(),
-                ui.h5("📈 Aggregated Total EV (Sum across all ECs)", style="color: var(--ocean-blue); font-weight: 600;"),
-                ui.output_table("aggregated_ev_table")
-            )
-        
-        # Single EC or current results
-        if results is not None and not results.empty and 'EV' in results.columns:
+        if results is not None:
             total_ev = results['EV'].sum()
             avg_ev = results['EV'].mean()
             max_ev = results['EV'].max()
@@ -1545,58 +1913,219 @@ def server(input, output, session):
     @render.table
     def total_ev_table():
         results = calculate_results()
-        if results is not None and not results.empty and 'EV' in results.columns:
-            display_cols = [results.columns[0], 'EV']  # First column + EV
-            return results[display_cols].head(20)
-        return pd.DataFrame()
-    
-    # Aggregated EV table for multiple ECs
-    @output
-    @render.table
-    def aggregated_ev_table():
-        ec_data = ec_datasets.get()
-        if not ec_data or len(ec_data) == 0:
-            return pd.DataFrame()
-        
-        # Calculate results for each EC and aggregate
-        aggregated = None
-        
-        for ec_name, ec_info in ec_data.items():
-            # Temporarily set data for calculation
-            temp_df = ec_info['data']
-            if temp_df is None or temp_df.empty:
-                continue
-                
-            # Simple EV calculation for aggregation
-            feature_cols = temp_df.columns[1:].tolist()
-            numeric_cols = [col for col in feature_cols if pd.api.types.is_numeric_dtype(temp_df[col])]
-            
-            if numeric_cols:
-                ev_values = temp_df[numeric_cols].mean(axis=1)  # Simple average for demo
-                
-                if aggregated is None:
-                    aggregated = pd.DataFrame({
-                        'Subzone': temp_df.iloc[:, 0],
-                        ec_name: ev_values
-                    })
-                else:
-                    aggregated[ec_name] = ev_values
-        
-        if aggregated is not None:
-            # Calculate total EV across all ECs
-            ec_cols = [col for col in aggregated.columns if col != 'Subzone']
-            aggregated['Total_EV'] = aggregated[ec_cols].sum(axis=1)
-            return aggregated.head(20)
-        
-        return pd.DataFrame()
-    
-    # Download results
-    @render.download(filename="eva_results.csv")
-    def download_results():
-        results = calculate_results()
         if results is not None:
-            return io.StringIO(results.to_csv(index=False))
-        return io.StringIO("")
+            return results[['Subzone ID', 'EV']].head(RESULTS_DISPLAY_LIMIT)
+        return pd.DataFrame()
+    
+    # Download results as Excel with multiple sheets and annotations
+    @render.download(filename=lambda: f"MARBEFES_EVA_Results_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+    def download_results():
+        """Export comprehensive analysis results to Excel with multiple annotated sheets"""
+        results = calculate_results()
+        df = uploaded_data.get()
+        data_type = input.data_type()
+        user_classifications = feature_classifications.get()
+
+        if results is None or df is None:
+            # Return empty workbook if no data
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                pd.DataFrame({"Message": ["No data available"]}).to_excel(writer, sheet_name='Info', index=False)
+            buffer.seek(0)
+            return buffer
+
+        # Create Excel writer
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+
+            # Sheet 1: Summary & Metadata
+            summary_data = {
+                'Parameter': [
+                    'Analysis Date',
+                    'Analysis Time',
+                    'Application Version',
+                    'EC Name',
+                    'Study Area',
+                    'Data Type',
+                    'Data Description',
+                    '',
+                    'Dataset Statistics',
+                    'Number of Subzones',
+                    'Number of Features',
+                    'Total EV (Sum)',
+                    'Average EV',
+                    'Maximum EV',
+                    'Minimum EV',
+                    '',
+                    'Reference',
+                    'Funding',
+                ],
+                'Value': [
+                    pd.Timestamp.now().strftime('%Y-%m-%d'),
+                    pd.Timestamp.now().strftime('%H:%M:%S'),
+                    '2.1.2',
+                    input.ec_name() if input.ec_name() else 'Not specified',
+                    input.study_area() if input.study_area() else 'Not specified',
+                    data_type if data_type else 'Not specified',
+                    input.data_description() if input.data_description() else 'Not specified',
+                    '',
+                    '',
+                    len(results),
+                    len([col for col in df.columns if col != 'Subzone ID']),
+                    f"{results['EV'].sum():.4f}",
+                    f"{results['EV'].mean():.4f}",
+                    f"{results['EV'].max():.4f}",
+                    f"{results['EV'].min():.4f}",
+                    '',
+                    'Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA)',
+                    'European Union Horizon Europe Research Programme - MARBEFES Project',
+                ]
+            }
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, sheet_name='Summary & Metadata', index=False)
+
+            # Sheet 2: Original Data (with NaN replaced by 0)
+            df_export = df.copy()
+            feature_cols_export = [col for col in df_export.columns if col != 'Subzone ID']
+            df_export[feature_cols_export] = df_export[feature_cols_export].fillna(0)
+            df_export.to_excel(writer, sheet_name='Original Data', index=False)
+
+            # Sheet 3: Assessment Questions Results (with NaN replaced by 0)
+            aq_cols = ['Subzone ID'] + [col for col in results.columns if col.startswith('AQ')] + ['EV']
+            results_export = results[aq_cols].copy()
+            results_export = results_export.fillna(0)
+            results_export.to_excel(writer, sheet_name='AQ & EV Results', index=False)
+
+            # Sheet 4: Feature Classifications
+            if user_classifications:
+                feature_cols = [col for col in df.columns if col != 'Subzone ID']
+                classifications_data = []
+                for feature in feature_cols:
+                    user_class = user_classifications.get(feature, [])
+                    classifications_data.append({
+                        'Feature Name': feature,
+                        'RRF (Regionally Rare)': 'Yes' if 'RRF' in user_class else 'No',
+                        'NRF (Nationally Rare)': 'Yes' if 'NRF' in user_class else 'No',
+                        'ESF (Ecologically Significant)': 'Yes' if 'ESF' in user_class else 'No',
+                        'HFS/BH (Habitat Forming)': 'Yes' if 'HFS_BH' in user_class else 'No',
+                        'SS (Symbiotic Species)': 'Yes' if 'SS' in user_class else 'No'
+                    })
+                classifications_df = pd.DataFrame(classifications_data)
+                classifications_df.to_excel(writer, sheet_name='Feature Classifications', index=False)
+
+            # Sheet 5: AQ Methodology Reference
+            methodology_data = {
+                'AQ': ['AQ1', 'AQ2', 'AQ3', 'AQ4', 'AQ5', 'AQ6', 'AQ7', 'AQ8', 'AQ9', 'AQ10', 'AQ11', 'AQ12', 'AQ13', 'AQ14', 'AQ15'],
+                'Name': [
+                    'Locally Rare Features (LRF) - Qualitative',
+                    'Locally Rare Features (LRF) - Quantitative',
+                    'Regionally Rare Features (RRF) - Qualitative',
+                    'Regionally Rare Features (RRF) - Quantitative',
+                    'Nationally Rare Features (NRF) - Qualitative',
+                    'Nationally Rare Features (NRF) - Quantitative',
+                    'All Features - Qualitative',
+                    'Regularly Occurring Features (ROF) - Quantitative',
+                    'ROF Concentration-Weighted - Quantitative',
+                    'Ecologically Significant Features (ESF) - Qualitative',
+                    'Ecologically Significant Features (ESF) - Quantitative',
+                    'Habitat Forming Species/Biogenic Habitat - Qualitative',
+                    'Habitat Forming Species/Biogenic Habitat - Quantitative',
+                    'Symbiotic Species (SS) - Qualitative',
+                    'Symbiotic Species (SS) - Quantitative'
+                ],
+                'Description': [
+                    'Features present in ≤5% of subzones',
+                    'Abundance of features in ≤5% of subzones',
+                    'User-defined regionally rare features',
+                    'Abundance of regionally rare features',
+                    'User-defined nationally rare features',
+                    'Abundance of nationally rare features',
+                    'All features without filter (baseline assessment)',
+                    'Features present in >5% of subzones',
+                    'Spatially concentrated regularly occurring features',
+                    'Keystone species and ecosystem engineers',
+                    'Abundance of ecologically significant features',
+                    'Corals, seagrasses, habitat-creating species',
+                    'Extent of habitat-forming features',
+                    'Species in symbiotic relationships',
+                    'Abundance of symbiotic species'
+                ],
+                'Data Type': [
+                    'Qualitative', 'Quantitative', 'Qualitative', 'Quantitative',
+                    'Qualitative', 'Quantitative', 'Qualitative', 'Quantitative',
+                    'Quantitative', 'Qualitative', 'Quantitative', 'Qualitative',
+                    'Quantitative', 'Qualitative', 'Quantitative'
+                ],
+                'Returns NaN when': [
+                    'No locally rare features',
+                    'Qualitative data or no LRF',
+                    'No RRF defined',
+                    'Qualitative data or no RRF',
+                    'No NRF defined',
+                    'Qualitative data or no NRF',
+                    'Never (always active for qualitative)',
+                    'Qualitative data',
+                    'Qualitative data',
+                    'No ESF defined',
+                    'Qualitative data or no ESF',
+                    'No HFS/BH defined',
+                    'Qualitative data or no HFS/BH',
+                    'No SS defined',
+                    'Qualitative data or no SS'
+                ]
+            }
+            methodology_df = pd.DataFrame(methodology_data)
+            methodology_df.to_excel(writer, sheet_name='AQ Methodology', index=False)
+
+            # Sheet 6: EV Calculation Explanation
+            ev_explanation = {
+                'Concept': [
+                    'EV Calculation Method',
+                    'For Qualitative Data',
+                    'For Quantitative Data',
+                    '',
+                    'Scale',
+                    'Interpretation',
+                    '',
+                    'Important Notes',
+                ],
+                'Explanation': [
+                    'EV = MAXIMUM of applicable AQ scores (not average or sum)',
+                    'EV = MAX(AQ1, AQ3, AQ5, AQ7, AQ10, AQ12, AQ14)',
+                    'EV = MAX(AQ2, AQ4, AQ6, AQ8, AQ9, AQ11, AQ13, AQ15)',
+                    '',
+                    'All values range from 0 to 5',
+                    'Higher values indicate greater ecological importance',
+                    '',
+                    'EV uses MAX to ensure any significant ecological value is captured, even if only one criterion is met',
+                ]
+            }
+            ev_df = pd.DataFrame(ev_explanation)
+            ev_df.to_excel(writer, sheet_name='EV Calculation', index=False)
+
+            # Sheet 7: Complete Results (All Data with NaN replaced by 0)
+            results_complete = results.copy()
+            results_complete = results_complete.fillna(0)
+            results_complete.to_excel(writer, sheet_name='Complete Results', index=False)
+
+            # Format worksheets
+            workbook = writer.book
+
+            # Format Summary sheet
+            summary_sheet = workbook['Summary & Metadata']
+            summary_sheet.column_dimensions['A'].width = 30
+            summary_sheet.column_dimensions['B'].width = 60
+
+            # Format methodology sheet
+            methodology_sheet = workbook['AQ Methodology']
+            methodology_sheet.column_dimensions['A'].width = 8
+            methodology_sheet.column_dimensions['B'].width = 45
+            methodology_sheet.column_dimensions['C'].width = 50
+            methodology_sheet.column_dimensions['D'].width = 15
+            methodology_sheet.column_dimensions['E'].width = 40
+
+        buffer.seek(0)
+        return buffer
     
     # Visualization
     @output
@@ -1645,18 +2174,17 @@ def server(input, output, session):
         elif plot_type == "Feature Distribution":
             # Create feature heatmap
             df = uploaded_data.get()
-            if df is not None and not df.empty and len(df.columns) > 1:
-                # Get feature columns (exclude first column)
-                feature_cols = df.columns[1:].tolist()
+            if df is not None and 'Subzone ID' in df.columns:
+                # Get feature columns (exclude Subzone ID)
+                feature_cols = [col for col in df.columns if col != 'Subzone ID']
                 
                 # Create heatmap data
                 heatmap_data = df[feature_cols].values
-                subzone_labels = df.iloc[:, 0].values  # Use first column as subzone labels
                 
                 fig = go.Figure(data=go.Heatmap(
                     z=heatmap_data,
                     x=feature_cols,
-                    y=subzone_labels,
+                    y=df['Subzone ID'],
                     colorscale='Blues',
                     hoverongaps=False,
                     colorbar=dict(title="Presence")
@@ -1677,9 +2205,9 @@ def server(input, output, session):
             
         else:  # AQ Scores
             # Create AQ scores histogram
-            aq_columns = [col for col in results.columns.tolist() if col.startswith('AQ')]
+            aq_columns = [col for col in results.columns if col.startswith('AQ')]
             
-            if aq_columns and not results.empty:
+            if aq_columns:
                 # Melt the dataframe to get all AQ scores in one column
                 aq_data = results[aq_columns].values.flatten()
                 
