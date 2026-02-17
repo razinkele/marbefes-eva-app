@@ -1115,7 +1115,139 @@ def server(input, output, session):
 
             # Update the input selector to the detected type
             ui.update_select("data_type", selected=auto_detected_type)
-    
+
+    # Handle GeoJSON upload
+    @reactive.Effect
+    @reactive.event(input.upload_geojson)
+    def handle_geojson_upload():
+        file_info = input.upload_geojson()
+        if file_info is None or len(file_info) == 0:
+            return
+
+        file_path = file_info[0]["datapath"]
+
+        try:
+            gdf = gpd.read_file(file_path)
+        except Exception as e:
+            geo_data.set(None)
+            logger.error(f"Could not read GeoJSON file: {e}")
+            return
+
+        # Store original CRS
+        if gdf.crs is not None:
+            original_crs.set(str(gdf.crs))
+        else:
+            original_crs.set("Unknown (no CRS defined)")
+
+        # Reproject to WGS84 for Leaflet if needed
+        if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+            try:
+                gdf = gdf.to_crs(epsg=4326)
+                logger.info(f"Reprojected from {original_crs.get()} to EPSG:4326")
+            except Exception as e:
+                logger.error(f"CRS reprojection failed: {e}")
+                return
+        elif gdf.crs is None:
+            gdf = gdf.set_crs(epsg=4326)
+
+        # Normalize Subzone ID column
+        subzone_col = None
+        for col in gdf.columns:
+            if col.lower().replace(' ', '').replace('_', '') in ['subzoneid', 'subzone_id', 'id', 'name']:
+                subzone_col = col
+                break
+
+        if subzone_col is None:
+            non_geom_cols = [c for c in gdf.columns if c != 'geometry']
+            if non_geom_cols:
+                subzone_col = non_geom_cols[0]
+            else:
+                logger.error("GeoJSON has no attribute columns to use as Subzone ID")
+                return
+
+        if subzone_col != 'Subzone ID':
+            gdf = gdf.rename(columns={subzone_col: 'Subzone ID'})
+
+        gdf['Subzone ID'] = gdf['Subzone ID'].astype(str).str.strip()
+
+        # Calculate match info with CSV data
+        csv_df = uploaded_data.get()
+        match_info = {'total_features': len(gdf)}
+        if csv_df is not None:
+            csv_ids = set(csv_df['Subzone ID'].astype(str).str.strip())
+            geo_ids = set(gdf['Subzone ID'])
+            matched = csv_ids & geo_ids
+            match_info['matched'] = len(matched)
+            match_info['csv_only'] = len(csv_ids - geo_ids)
+            match_info['geo_only'] = len(geo_ids - csv_ids)
+        else:
+            match_info['matched'] = 0
+            match_info['csv_only'] = 0
+            match_info['geo_only'] = 0
+
+        geo_match_info.set(match_info)
+
+        # Keep only Subzone ID and geometry
+        gdf = gdf[['Subzone ID', 'geometry']]
+        geo_data.set(gdf)
+        logger.info(f"GeoJSON loaded: {len(gdf)} features, CRS: {original_crs.get()}")
+
+    # GeoJSON spatial preview
+    @output
+    @render.ui
+    def geo_preview_ui():
+        gdf = geo_data.get()
+        crs = original_crs.get()
+        match_info = geo_match_info.get()
+
+        if gdf is None:
+            return ui.div()
+
+        bounds = gdf.total_bounds  # [minx, miny, maxx, maxy]
+
+        match_html = ""
+        if match_info and match_info.get('matched', 0) > 0:
+            extra = ""
+            if match_info.get('csv_only', 0) > 0 or match_info.get('geo_only', 0) > 0:
+                extra = f'<p style="margin: 0.25rem 0 0; color: #ff9800; font-size: 0.9rem;">⚠️ {match_info["csv_only"]} CSV-only, {match_info["geo_only"]} GeoJSON-only</p>'
+            match_html = f'''
+                <div style="margin-top: 1rem; padding: 1rem; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #28a745;">
+                    <p style="margin: 0; color: #28a745; font-weight: 600;">
+                        ✅ {match_info['matched']} subzones matched between CSV and GeoJSON
+                    </p>
+                    {extra}
+                </div>
+            '''
+        elif match_info:
+            match_html = '''
+                <div style="margin-top: 1rem; padding: 1rem; background: #fff3e0; border-radius: 8px; border-left: 4px solid #ff9800;">
+                    <p style="margin: 0; color: #ff9800; font-weight: 600;">
+                        ⚠️ Upload CSV data to see match status
+                    </p>
+                </div>
+            '''
+
+        return ui.card(
+            ui.card_header("🗺️ Spatial Grid Preview"),
+            ui.div(
+                ui.div(
+                    ui.h5(f"📐 Grid: {len(gdf)} features loaded",
+                          style="color: #28a745; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.p(
+                        f"📍 Original CRS: {crs}",
+                        ui.br(),
+                        f"🌐 Bounding box: [{bounds[0]:.4f}, {bounds[1]:.4f}] to [{bounds[2]:.4f}, {bounds[3]:.4f}]",
+                        ui.br(),
+                        "🔄 Displayed in WGS84 (EPSG:4326)",
+                        style="color: #6c757d; line-height: 2;"
+                    ),
+                    ui.HTML(match_html),
+                    class_="info-box"
+                ),
+                style="padding: 1rem;"
+            )
+        )
+
     # Data preview
     @output
     @render.ui
