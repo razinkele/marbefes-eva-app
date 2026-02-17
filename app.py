@@ -616,6 +616,7 @@ A2, 1, 1, 0, ...""",
                         )
                     )
                 ),
+                ui.output_ui("validation_report_ui"),
                 ui.output_ui("data_preview_ui"),
                 ui.output_ui("geo_preview_ui")
             )
@@ -861,6 +862,7 @@ def server(input, output, session):
     geo_data = reactive.Value(None)  # GeoDataFrame with grid geometries
     original_crs = reactive.Value(None)  # Original CRS string from uploaded GeoJSON
     geo_match_info = reactive.Value(None)  # Dict with match statistics
+    validation_report = reactive.Value(None)
 
     def detect_data_type(df):
         """
@@ -1116,7 +1118,7 @@ def server(input, output, session):
                 if file_size_mb > MAX_FILE_SIZE_MB:
                     # File is too large, reset uploaded_data and return
                     uploaded_data.set(None)
-                    logger.error(f"File size ({file_size_mb:.2f} MB) exceeds maximum allowed size ({MAX_FILE_SIZE_MB} MB)")
+                    ui.notification_show(f"File too large ({file_size_mb:.1f} MB). Maximum is {MAX_FILE_SIZE_MB} MB.", type="error", duration=8)
                     return
             except Exception as e:
                 logger.error(f"Could not check file size: {e}")
@@ -1127,7 +1129,7 @@ def server(input, output, session):
                 df = pd.read_csv(file_path)
             except Exception as e:
                 uploaded_data.set(None)
-                logger.error(f"Could not read CSV file: {e}")
+                ui.notification_show(f"Could not read CSV file: {e}", type="error", duration=8)
                 return
 
             # Clean up the data:
@@ -1144,6 +1146,7 @@ def server(input, output, session):
 
             df = df.dropna(subset=['Subzone ID'])
             df['Subzone ID'] = df['Subzone ID'].astype(str).str.strip()
+            original_dup_count = int(df.duplicated(subset=['Subzone ID']).sum())
             df = df.drop_duplicates(subset=['Subzone ID'])
 
             # 3. Convert feature columns to numeric, but preserve NaN
@@ -1156,12 +1159,76 @@ def server(input, output, session):
 
             uploaded_data.set(df)
 
+            # Build validation report
+            feature_cols = [col for col in df.columns if col != 'Subzone ID']
+            report = {
+                'rows': len(df),
+                'columns': len(feature_cols),
+                'features': feature_cols,
+                'missing': {col: int(df[col].isna().sum()) for col in feature_cols},
+                'missing_pct': {col: round(df[col].isna().sum() / len(df) * 100, 1) for col in feature_cols},
+                'non_numeric': [col for col in feature_cols if not pd.api.types.is_numeric_dtype(df[col])],
+                'duplicate_ids': original_dup_count,
+                'file_size_mb': round(file_size_mb, 2),
+            }
+            validation_report.set(report)
+
             # Automatically detect data type
             auto_detected_type = detect_data_type(df)
             detected_data_type.set(auto_detected_type)
 
             # Update the input selector to the detected type
             ui.update_select("data_type", selected=auto_detected_type)
+
+    # Validation report UI
+    @output
+    @render.ui
+    def validation_report_ui():
+        report = validation_report.get()
+        if report is None:
+            return ui.TagList()
+
+        items = []
+        items.append(ui.p(
+            f"✅ Loaded {report['rows']} subzones × {report['columns']} features ({report['file_size_mb']} MB)",
+            style="color: #28a745; font-weight: 600; margin-bottom: 0.5rem;"
+        ))
+
+        if report['duplicate_ids'] > 0:
+            items.append(ui.p(
+                f"⚠️ {report['duplicate_ids']} duplicate Subzone IDs were removed",
+                style="color: #ff9800;"
+            ))
+        if report['non_numeric']:
+            items.append(ui.p(
+                f"⚠️ Non-numeric columns: {', '.join(report['non_numeric'])}",
+                style="color: #ff9800;"
+            ))
+
+        cols_with_missing = {k: v for k, v in report['missing'].items() if v > 0}
+        if cols_with_missing:
+            items.append(ui.p(
+                f"ℹ️ {len(cols_with_missing)} columns have missing values (treated as 0):",
+                style="color: #2196F3; margin-top: 0.5rem;"
+            ))
+            for col, count in list(cols_with_missing.items())[:5]:
+                pct = report['missing_pct'][col]
+                items.append(ui.p(
+                    f"  • {col}: {count} missing ({pct}%)",
+                    style="color: #6c757d; margin-left: 1rem; margin-bottom: 0.2rem;"
+                ))
+            if len(cols_with_missing) > 5:
+                items.append(ui.p(
+                    f"  ... and {len(cols_with_missing) - 5} more",
+                    style="color: #6c757d; margin-left: 1rem;"
+                ))
+        else:
+            items.append(ui.p("✅ No missing values detected", style="color: #28a745;"))
+
+        return ui.card(
+            ui.card_header("📋 Data Validation Report"),
+            ui.div(*items, style="padding: 1rem;")
+        )
 
     # Handle spatial file upload (GeoJSON, Shapefile ZIP, GeoPackage)
     @reactive.Effect
