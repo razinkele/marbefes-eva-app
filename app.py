@@ -795,7 +795,8 @@ A2, 1, 1, 0, ...""",
                     ui.input_select(
                         "plot_type",
                         "Visualization Type:",
-                        choices=["EV by Subzone", "Feature Distribution", "AQ Scores"]
+                        choices=["EV by Subzone", "Feature Distribution", "AQ Scores",
+                                 "AQ Breakdown by Subzone", "AQ Radar Comparison", "AQ Heatmap"]
                     ),
                     ui.input_select(
                         "color_scheme",
@@ -2694,7 +2695,57 @@ def server(input, output, session):
                 return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="feature_plot"))
             
             return ui.p("Unable to generate feature distribution chart")
-            
+
+        elif plot_type == "AQ Breakdown by Subzone":
+            # Grouped bar chart showing active AQ scores per subzone with EV line
+            aq_columns = [col for col in results.columns if col.startswith('AQ')]
+            if not aq_columns:
+                return ui.p("No AQ scores available")
+
+            # Filter to active AQs (those with at least one non-zero value)
+            active_aqs = [col for col in aq_columns if results[col].abs().sum() > 0]
+            if not active_aqs:
+                return ui.p("No active AQ scores to display. All AQ values are zero.")
+
+            fig = go.Figure()
+
+            # Add bars for each active AQ
+            colors = px.colors.qualitative.Plotly
+            for i, aq in enumerate(active_aqs):
+                fig.add_trace(go.Bar(
+                    name=aq,
+                    x=results['Subzone ID'],
+                    y=results[aq],
+                    marker_color=colors[i % len(colors)],
+                    hovertemplate=f'{aq}: %{{y:.2f}}<extra></extra>'
+                ))
+
+            # Add EV line overlay
+            fig.add_trace(go.Scatter(
+                name='EV',
+                x=results['Subzone ID'],
+                y=results['EV'],
+                mode='lines+markers',
+                line=dict(color='black', width=2, dash='dot'),
+                marker=dict(size=6, color='black'),
+                hovertemplate='EV: %{y:.2f}<extra></extra>'
+            ))
+
+            fig.update_layout(
+                title="AQ Score Breakdown by Subzone",
+                xaxis_title="Subzone ID",
+                yaxis_title="Score (0-5)",
+                yaxis=dict(range=[0, 5.5]),
+                barmode='group',
+                height=550,
+                hovermode='x unified',
+                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)'
+            )
+
+            return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="aq_breakdown_plot"))
+
         else:  # AQ Scores
             # Create AQ scores histogram
             aq_columns = [col for col in results.columns if col.startswith('AQ')]
