@@ -355,6 +355,11 @@ custom_css = """
         font-weight: 600;
         margin-right: 4px;
     }
+    .aq-max-cell {
+        background-color: #c8e6c9 !important;
+        font-weight: 700;
+        border: 2px solid #4caf50;
+    }
 </style>
 """
 
@@ -2304,8 +2309,15 @@ def server(input, output, session):
             <tbody>
         """
 
+        # Identify AQ columns for max-highlighting
+        aq_cols = [col for col in display_cols if col.startswith('AQ')]
+
         # Add data rows
         for idx, row in display_df.iterrows():
+            # Find the AQ column with the max value for this row
+            aq_values = {col: row[col] for col in aq_cols if pd.notna(row[col]) and isinstance(row[col], (int, float)) and row[col] > 0}
+            max_aq_col = max(aq_values, key=aq_values.get) if aq_values else None
+
             html += "<tr>"
             for col in display_cols:
                 value = row[col]
@@ -2313,8 +2325,11 @@ def server(input, output, session):
                     # Display NA for missing values
                     html += '<td style="color: #999; font-style: italic; text-align: center;">NA</td>'
                 elif isinstance(value, (int, float)):
-                    # Format numbers nicely
-                    html += f'<td>{value}</td>'
+                    # Format numbers nicely, highlight max AQ cell
+                    if col == max_aq_col:
+                        html += f'<td class="aq-max-cell">{value}</td>'
+                    else:
+                        html += f'<td>{value}</td>'
                 else:
                     html += f'<td>{value}</td>'
             html += "</tr>"
