@@ -934,6 +934,10 @@ def server(input, output, session):
     geo_match_info = reactive.Value(None)  # Dict with match statistics
     validation_report = reactive.Value(None)
 
+    # Multi-EC support
+    ec_store = reactive.Value({})      # {ec_name: {data, data_type, classifications, results, feature_count}}
+    current_ec = reactive.Value(None)  # Name of the active EC
+
     def detect_data_type(df):
         """
         Automatically detect if data is qualitative or quantitative
@@ -2630,6 +2634,82 @@ def server(input, output, session):
         buffer.seek(0)
         return buffer
     
+    @reactive.Effect
+    @reactive.event(input.save_ec)
+    def _save_current_ec():
+        ec_name = input.ec_name().strip()
+        if not ec_name:
+            ui.notification_show("Please enter an EC Name before saving.", type="warning")
+            return
+
+        df = uploaded_data.get()
+        if df is None:
+            ui.notification_show("No data uploaded. Upload a CSV first.", type="warning")
+            return
+
+        results = calculate_results()
+        store = ec_store.get().copy()
+        store[ec_name] = {
+            'data': df.copy(),
+            'data_type': input.data_type(),
+            'classifications': feature_classifications.get().copy(),
+            'results': results.copy() if results is not None else None,
+            'feature_count': len([c for c in df.columns if c != 'Subzone ID']),
+        }
+        ec_store.set(store)
+        current_ec.set(ec_name)
+        ui.notification_show(f"EC '{ec_name}' saved successfully.", type="message")
+
+    @reactive.Effect
+    @reactive.event(input.select_ec)
+    def _restore_ec():
+        ec_name = input.select_ec()
+        if not ec_name or ec_name == "":
+            return
+        store = ec_store.get()
+        if ec_name not in store:
+            return
+
+        ec = store[ec_name]
+        uploaded_data.set(ec['data'].copy())
+        feature_classifications.set(ec['classifications'].copy())
+        detected_data_type.set(ec['data_type'])
+        current_ec.set(ec_name)
+
+        # Update the data type dropdown to match
+        ui.update_select("data_type", selected=ec['data_type'])
+        # Update EC name field
+        ui.update_text("ec_name", value=ec_name)
+
+        ui.notification_show(f"Switched to EC '{ec_name}'.", type="message")
+
+    @reactive.Effect
+    @reactive.event(input.new_ec)
+    def _new_ec():
+        uploaded_data.set(None)
+        feature_classifications.set({})
+        detected_data_type.set(None)
+        current_ec.set(None)
+        ui.update_text("ec_name", value="")
+        ui.update_select("data_type", selected="TO SPECIFY")
+        ui.notification_show("Ready for a new EC. Upload a CSV file.", type="message")
+
+    @reactive.Effect
+    @reactive.event(input.delete_ec)
+    def _delete_ec():
+        ec_name = input.select_ec()
+        if not ec_name:
+            return
+        store = ec_store.get().copy()
+        if ec_name in store:
+            del store[ec_name]
+            ec_store.set(store)
+            if current_ec.get() == ec_name:
+                current_ec.set(None)
+            ui.notification_show(f"EC '{ec_name}' removed.", type="message")
+            # Update the select dropdown
+            ui.update_select("select_ec", choices=[""] + list(store.keys()), selected="")
+
     @reactive.Effect
     @reactive.event(uploaded_data)
     def _update_radar_choices():
