@@ -26,23 +26,9 @@ import eva_calculations
 import eva_export
 
 from eva_config import (
-    MAX_FEATURES,
-    LOCALLY_RARE_THRESHOLD,
-    PERCENTILE_95,
-    MAX_EV_SCALE,
-    PREVIEW_ROWS_LIMIT,
-    RESULTS_DISPLAY_LIMIT,
-    MAX_FILE_SIZE_MB,
-    QUALITATIVE_AQS,
-    QUANTITATIVE_AQS,
-    ALL_AQS,
-    AQ_TOOLTIPS,
-    ACRONYMS,
-    CLASSIFICATION_BADGE_COLORS,
-    EVA_5CLASS_BINS,
-    EVA_5CLASS_COLORS,
-    EVA_5CLASS_LABELS,
-    BASEMAP_TILES,
+    MAX_FEATURES, PREVIEW_ROWS_LIMIT, RESULTS_DISPLAY_LIMIT, MAX_FILE_SIZE_MB,
+    ACRONYMS, CLASSIFICATION_BADGE_COLORS,
+    EVA_5CLASS_BINS, EVA_5CLASS_COLORS, EVA_5CLASS_LABELS, BASEMAP_TILES,
 )
 
 # Configure logging
@@ -1550,14 +1536,12 @@ def server(input, output, session):
         feature_names = df.columns[1:].tolist()
         classifications = feature_classifications.get() or {}
 
-        badge_colors = {'RRF': '#e91e63', 'NRF': '#9c27b0', 'ESF': '#2196F3', 'HFS_BH': '#4caf50', 'SS': '#ff9800'}
-
         feature_rows = []
         for feature in feature_names:
             current = classifications.get(feature, [])
             badges = [ui.span(
                 cls, class_="feature-badge",
-                style=f"background: {badge_colors.get(cls, '#999')}; color: white;"
+                style=f"background: {CLASSIFICATION_BADGE_COLORS.get(cls, '#999')}; color: white;"
             ) for cls in current]
 
             feature_rows.append(
@@ -2575,16 +2559,6 @@ def server(input, output, session):
             return 12
         else:
             return 14
-
-    EVA_5CLASS_BINS = [0, 1, 2, 3, 4, 5]
-    EVA_5CLASS_COLORS = ['#3288bd', '#99d594', '#e6f598', '#fc8d59', '#d53e4f']
-    EVA_5CLASS_LABELS = ['Very Low (0-1)', 'Low (1-2)', 'Medium (2-3)', 'High (3-4)', 'Very High (4-5)']
-
-    BASEMAP_TILES = {
-        "CartoDB Positron": "cartodbpositron",
-        "OpenStreetMap": "openstreetmap",
-        "CartoDB Dark Matter": "cartodbdark_matter",
-    }
 
     def create_ev_map(map_gdf, variable, color_scheme_name, classification, basemap_name, opacity):
         """Create a folium choropleth map from a GeoDataFrame with EVA results."""
