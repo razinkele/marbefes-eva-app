@@ -28,21 +28,40 @@ from openpyxl.formatting.rule import ColorScaleRule
 from openpyxl.drawing.image import Image as XlImage
 import plotly.io as pio
 
+from eva_config import (
+    APP_VERSION,
+    MAX_FEATURES,
+    LOCALLY_RARE_THRESHOLD,
+    PERCENTILE_95,
+    MAX_EV_SCALE,
+    PREVIEW_ROWS_LIMIT,
+    RESULTS_DISPLAY_LIMIT,
+    MAX_FILE_SIZE_MB,
+    QUALITATIVE_AQS,
+    QUANTITATIVE_AQS,
+    ALL_AQS,
+    AQ_TOOLTIPS,
+    AQ_METHODOLOGY,
+    EV_EXPLANATION,
+    ACRONYMS,
+    CLASSIFICATION_BADGE_COLORS,
+    EVA_5CLASS_BINS,
+    EVA_5CLASS_COLORS,
+    EVA_5CLASS_LABELS,
+    BASEMAP_TILES,
+    EXPORT_HEADER_COLOR,
+    EXPORT_ALT_ROW_COLOR,
+    EXPORT_TAB_COLORS,
+    EXPORT_MULTI_EC_TAB_COLOR,
+    EXPORT_CHART_TAB_COLOR,
+)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Application Constants
-MAX_FEATURES = 100  # Maximum number of features allowed
-LOCALLY_RARE_THRESHOLD = 0.05  # 5% threshold for locally rare features
-PERCENTILE_95 = 95  # 95th percentile for concentration calculations
-MAX_EV_SCALE = 5  # Maximum value on the EV scale (0-5)
-PREVIEW_ROWS_LIMIT = 10  # Number of rows to show in data preview
-RESULTS_DISPLAY_LIMIT = 20  # Number of results to display in tables
-MAX_FILE_SIZE_MB = 50  # Maximum file size for uploads in MB
 
 # Custom CSS for enhanced styling
 custom_css = """
@@ -1018,24 +1037,7 @@ def server(input, output, session):
     @output
     @render.table
     def acronyms_table():
-        acronyms = {
-            "Acronym": ["EVA", "EV", "EC", "AQ", "LRF", "RRF", "NRF", "ROF", "ESF", "HFS", "BH", "SS"],
-            "Full Name": [
-                "Ecological value assessment",
-                "Ecological value",
-                "Ecosystem component",
-                "Assessment question",
-                "Locally rare feature",
-                "Regionally rare feature",
-                "Nationally rare feature",
-                "Regularly occurring feature",
-                "Ecologically significant feature",
-                "Habitat forming species",
-                "Biogenic habitat",
-                "Symbiotic species"
-            ]
-        }
-        return pd.DataFrame(acronyms)
+        return pd.DataFrame(ACRONYMS)
 
     # AQ Guide Content
     @output
@@ -2254,25 +2256,7 @@ def server(input, output, session):
 
     # Define tooltips for each AQ
     def get_aq_tooltip(aq_name):
-        tooltips = {
-            "AQ1": "Locally Rare Features (LRF) - Qualitative | Average of rescaled values for features in ≤5% of subzones | Returns NaN when no features are locally rare",
-            "AQ2": "Locally Rare Features (LRF) - Quantitative | Average abundance of locally rare features | Returns NaN for qualitative data or when no LRF exist",
-            "AQ3": "Regionally Rare Features (RRF) - Qualitative | Average of rescaled values for RRF-classified features | Returns NaN when no RRF features defined",
-            "AQ4": "Regionally Rare Features (RRF) - Quantitative | Average abundance of regionally rare features | Returns NaN for qualitative data or no RRF",
-            "AQ5": "Nationally Rare Features (NRF) - Qualitative | Average of rescaled values for NRF features | Highest rarity classification",
-            "AQ6": "Nationally Rare Features (NRF) - Quantitative | Average abundance of nationally rare features | Returns NaN for qualitative data or no NRF",
-            "AQ7": "All Features - Qualitative ⭐ | Average of ALL features (no filter) | ALWAYS ACTIVE for qualitative data",
-            "AQ8": "Regularly Occurring Features (ROF) - Quantitative | Average abundance of features in >5% of subzones | Returns NaN for qualitative data",
-            "AQ9": "ROF Concentration-Weighted - Quantitative 🔬 | Complex 3-step calculation considering spatial concentration | Identifies hotspots",
-            "AQ10": "Ecologically Significant Features (ESF) - Qualitative | Keystone species, ecosystem engineers | Returns NaN when no ESF defined",
-            "AQ11": "Ecologically Significant Features (ESF) - Quantitative | Abundance of ecologically significant features | Returns NaN for qualitative or no ESF",
-            "AQ12": "Habitat Forming Species/Biogenic Habitat (HFS/BH) - Qualitative | Features creating habitat structure (corals, seagrasses, etc.) | Returns NaN when no HFS/BH defined",
-            "AQ13": "Habitat Forming Species/Biogenic Habitat (HFS/BH) - Quantitative | Extent of habitat-forming features | Returns NaN for qualitative or no HFS/BH",
-            "AQ14": "Symbiotic Species (SS) - Qualitative | Species in symbiotic relationships | Returns NaN when no SS defined",
-            "AQ15": "Symbiotic Species (SS) - Quantitative | Abundance of symbiotic species | Returns NaN for qualitative or no SS",
-            "EV": "Ecological Value | MAX of applicable AQs (not average!) | Qualitative: MAX(AQ1,3,5,7,10,12,14) | Quantitative: MAX(AQ2,4,6,8,9,11,13,15)"
-        }
-        return tooltips.get(aq_name, "")
+        return AQ_TOOLTIPS.get(aq_name, "")
 
     @output
     @render.ui
