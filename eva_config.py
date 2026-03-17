@@ -5,10 +5,55 @@ All application constants, reference data, and metadata used across the
 EVA application.  Extracted from app.py to keep a single source of truth.
 """
 
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import pandas as pd
+
 # ---------------------------------------------------------------------------
 # Application version (from centralized version.py)
 # ---------------------------------------------------------------------------
 from version import __version__ as APP_VERSION
+
+
+# ---------------------------------------------------------------------------
+# ECEntry dataclass — structured storage for ecosystem components
+# ---------------------------------------------------------------------------
+@dataclass
+class ECEntry:
+    """A single saved Ecosystem Component with its data and results."""
+
+    data: pd.DataFrame
+    data_type: str                          # "qualitative" or "quantitative"
+    classifications: dict[str, list[str]]   # {feature_name: [tags]}
+    results: pd.DataFrame | None = None
+
+    @property
+    def feature_count(self) -> int:
+        """Number of feature columns (excludes 'Subzone ID')."""
+        return len([c for c in self.data.columns if c != "Subzone ID"])
+
+    # Dict-like access for backward compatibility with existing code
+    def __getitem__(self, key: str) -> Any:
+        if key == "feature_count":
+            return self.feature_count
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except AttributeError:
+            return default
+
+    def copy(self) -> ECEntry:
+        return ECEntry(
+            data=self.data.copy(),
+            data_type=self.data_type,
+            classifications={k: list(v) for k, v in self.classifications.items()},
+            results=self.results.copy() if self.results is not None else None,
+        )
 
 # ---------------------------------------------------------------------------
 # Calculation constants

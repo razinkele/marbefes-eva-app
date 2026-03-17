@@ -32,7 +32,7 @@ from version import __version__ as APP_VERSION_STR, get_version_info
 
 from eva_config import (
     MAX_FEATURES, PREVIEW_ROWS_LIMIT, RESULTS_DISPLAY_LIMIT, MAX_FILE_SIZE_MB,
-    ACRONYMS, CLASSIFICATION_BADGE_COLORS,
+    ACRONYMS, CLASSIFICATION_BADGE_COLORS, ECEntry,
     EVA_5CLASS_BINS, EVA_5CLASS_COLORS, EVA_5CLASS_LABELS, BASEMAP_TILES,
 )
 
@@ -2315,13 +2315,12 @@ def server(input, output, session):
 
         results = calculate_results()
         store = ec_store.get().copy()
-        store[ec_name] = {
-            'data': df.copy(),
-            'data_type': input.data_type(),
-            'classifications': feature_classifications.get().copy(),
-            'results': results.copy() if results is not None else None,
-            'feature_count': len([c for c in df.columns if c != 'Subzone ID']),
-        }
+        store[ec_name] = ECEntry(
+            data=df.copy(),
+            data_type=input.data_type(),
+            classifications=feature_classifications.get().copy(),
+            results=results.copy() if results is not None else None,
+        )
         ec_store.set(store)
         current_ec.set(ec_name)
         ui.notification_show(f"EC '{ec_name}' saved successfully.", type="message")
@@ -2389,10 +2388,11 @@ def server(input, output, session):
         df = uploaded_data.get()
         if results is not None and df is not None:
             updated = store.copy()
-            updated[ec_name] = store[ec_name].copy()  # deep-copy inner dict to avoid aliasing
-            updated[ec_name]['results'] = results.copy()
-            updated[ec_name]['classifications'] = feature_classifications.get().copy()
-            updated[ec_name]['data_type'] = input.data_type()
+            entry = store[ec_name].copy()
+            entry.results = results.copy()
+            entry.classifications = feature_classifications.get().copy()
+            entry.data_type = input.data_type()
+            updated[ec_name] = entry
             ec_store.set(updated)
 
     @output
