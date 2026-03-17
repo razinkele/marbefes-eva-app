@@ -4,6 +4,8 @@ MARBEFES EVA Calculations — pure functions for EVA assessment.
 All functions are stateless and have no Shiny dependencies.
 """
 
+from __future__ import annotations
+
 import pandas as pd
 import numpy as np
 import logging
@@ -16,7 +18,7 @@ from eva_config import (
 logger = logging.getLogger(__name__)
 
 
-def detect_data_type(df):
+def detect_data_type(df: pd.DataFrame) -> str:
     """
     Automatically detect if data is qualitative or quantitative
 
@@ -71,7 +73,7 @@ def detect_data_type(df):
         return "quantitative"
 
 
-def rescale_qualitative(df):
+def rescale_qualitative(df: pd.DataFrame) -> pd.DataFrame:
     """
     Rescale qualitative (binary) data to 0-MAX_EV_SCALE scale
     For presence/absence data: presence (1) = MAX_EV_SCALE, absence (0) = 0
@@ -93,7 +95,7 @@ def rescale_qualitative(df):
     return rescaled
 
 
-def rescale_quantitative(df):
+def rescale_quantitative(df: pd.DataFrame) -> pd.DataFrame:
     """
     Rescale quantitative data to 0-MAX_EV_SCALE scale using min-max normalization
     Formula: MAX_EV_SCALE * (value - min) / (max - min)
@@ -127,7 +129,11 @@ def rescale_quantitative(df):
     return rescaled
 
 
-def classify_features(df, user_classifications, lrf_threshold=LOCALLY_RARE_THRESHOLD):
+def classify_features(
+    df: pd.DataFrame,
+    user_classifications: dict[str, list[str]],
+    lrf_threshold: float = LOCALLY_RARE_THRESHOLD,
+) -> dict[str, dict[str, int]]:
     """
     Classify features based on intrinsic properties (LRF, ROF) and user input.
 
@@ -170,7 +176,11 @@ def classify_features(df, user_classifications, lrf_threshold=LOCALLY_RARE_THRES
     return classifications
 
 
-def calculate_aq9_special(df, classifications, percentile=PERCENTILE_95):
+def calculate_aq9_special(
+    df: pd.DataFrame,
+    classifications: dict[str, dict[str, int]],
+    percentile: int = PERCENTILE_95,
+) -> pd.DataFrame:
     """
     Calculate AQ9 special 3-step concentration-weighted values
     Step 1: Normalize by mean
@@ -244,7 +254,14 @@ def calculate_aq9_special(df, classifications, percentile=PERCENTILE_95):
     return aq9_rescaled
 
 
-def calculate_all_aqs(df, data_type, rescaled_qual, rescaled_quant, aq9_rescaled, classifications):
+def calculate_all_aqs(
+    df: pd.DataFrame,
+    data_type: str,
+    rescaled_qual: pd.DataFrame,
+    rescaled_quant: pd.DataFrame,
+    aq9_rescaled: pd.DataFrame,
+    classifications: dict[str, dict[str, int]],
+) -> pd.DataFrame:
     """Calculate all 15 Assessment Questions (AQ1-AQ15) in a refactored way."""
     results = pd.DataFrame(index=df.index)
     results['Subzone ID'] = df['Subzone ID']
@@ -309,7 +326,7 @@ def calculate_all_aqs(df, data_type, rescaled_qual, rescaled_quant, aq9_rescaled
     return results
 
 
-def calculate_ev(aq_results, data_type):
+def calculate_ev(aq_results: pd.DataFrame, data_type: str) -> list[float]:
     """Calculate EV as MAX of appropriate AQs based on data type (vectorized)."""
     if data_type == "qualitative":
         aq_cols = QUALITATIVE_AQS
@@ -325,7 +342,11 @@ def calculate_ev(aq_results, data_type):
     return aq_results[cols_present].fillna(0).max(axis=1).tolist()
 
 
-def get_aq_status(data_type, classifications, results):
+def get_aq_status(
+    data_type: str,
+    classifications: dict[str, list[str]],
+    results: pd.DataFrame,
+) -> dict[str, tuple[str, str]]:
     """Analyze each AQ and return status with explanation."""
     qual_aqs = QUALITATIVE_AQS
     quant_aqs = QUANTITATIVE_AQS
@@ -360,5 +381,5 @@ def get_aq_status(data_type, classifications, results):
     return statuses
 
 
-def get_aq_tooltip(aq_name):
+def get_aq_tooltip(aq_name: str) -> str:
     return AQ_TOOLTIPS.get(aq_name, "")
