@@ -103,25 +103,25 @@ def rescale_quantitative(df):
     rescaled = df.copy()
 
     for col in feature_cols:
-        # Fill any NaN with 0 first
-        values = df[col].fillna(0)
+        # Compute min/max on original data (excluding NaN) to avoid bias
+        min_val = df[col].min()   # skipna=True by default
+        max_val = df[col].max()
 
-        # Calculate min and max (skipna=True by default, but we already filled NaN)
-        min_val = values.min()
-        max_val = values.max()
+        # Fill NaN with 0 only for the output values
+        values = df[col].fillna(0)
 
         # Check for division by zero and handle NaN
         if pd.isna(min_val) or pd.isna(max_val):
-            # If still NaN, set to 0
+            # All values are NaN, set to 0
             rescaled[col] = 0
         elif max_val > min_val:
-            # Rescale to 0-MAX_EV_SCALE
+            # Rescale to 0-MAX_EV_SCALE using true data range
             rescaled[col] = MAX_EV_SCALE * (values - min_val) / (max_val - min_val)
 
             # Ensure no NaN in output
             rescaled[col] = rescaled[col].fillna(0)
         else:
-            # All values are the same
+            # All non-NaN values are the same
             rescaled[col] = 0
 
     return rescaled
@@ -148,9 +148,16 @@ def classify_features(df, user_classifications, lrf_threshold=LOCALLY_RARE_THRES
         total_count = df[col].notna().sum()
         proportion = positive_count / total_count if total_count > 0 else 0
 
-        is_lrf = 1 if proportion > 0 and proportion <= lrf_threshold else 0
-        classifications['LRF'][col] = is_lrf
-        classifications['ROF'][col] = 1 - is_lrf
+        if proportion == 0:
+            # Feature never appears — neither locally rare nor regularly occurring
+            classifications['LRF'][col] = 0
+            classifications['ROF'][col] = 0
+        elif proportion <= lrf_threshold:
+            classifications['LRF'][col] = 1
+            classifications['ROF'][col] = 0
+        else:
+            classifications['LRF'][col] = 0
+            classifications['ROF'][col] = 1
 
         # User-defined classifications
         user_settings = user_classifications.get(col, [])
@@ -293,9 +300,9 @@ def calculate_all_aqs(df, data_type, rescaled_qual, rescaled_quant, aq9_rescaled
 
                 # If all values in a row are 0, keep it as 0 (not NaN)
                 results[aq] = results[aq].fillna(0)
-            except Exception as e:
-                logger.error(f"Error calculating {aq}: {e}")
-                results[aq] = 0
+            except KeyError as e:
+                logger.error(f"Missing column while calculating {aq}: {e}")
+                results[aq] = np.nan
         else:
             results[aq] = np.nan
 
@@ -303,31 +310,19 @@ def calculate_all_aqs(df, data_type, rescaled_qual, rescaled_quant, aq9_rescaled
 
 
 def calculate_ev(aq_results, data_type):
-    """Calculate EV as MAX of appropriate AQs based on data type"""
-    ev_values = []
+    """Calculate EV as MAX of appropriate AQs based on data type (vectorized)."""
+    if data_type == "qualitative":
+        aq_cols = QUALITATIVE_AQS
+    elif data_type == "quantitative":
+        aq_cols = QUANTITATIVE_AQS
+    else:
+        return [0] * len(aq_results)
 
-    for idx in aq_results.index:
-        if data_type == "qualitative":
-            # EV = MAX(AQ1, AQ3, AQ5, AQ7, AQ10, AQ12, AQ14)
-            aq_cols = QUALITATIVE_AQS
-        elif data_type == "quantitative":
-            # EV = MAX(AQ2, AQ4, AQ6, AQ8, AQ9, AQ11, AQ13, AQ15)
-            aq_cols = QUANTITATIVE_AQS
-        else:
-            ev_values.append(0)
-            continue
+    cols_present = [c for c in aq_cols if c in aq_results.columns]
+    if not cols_present:
+        return [0] * len(aq_results)
 
-        # Get values, treating NaN as 0
-        values = []
-        for col in aq_cols:
-            val = aq_results.loc[idx, col]
-            if pd.notna(val) and val != 0:
-                values.append(val)
-
-        # Calculate max, defaulting to 0 if no valid values
-        ev_values.append(np.max(values) if values else 0)
-
-    return ev_values
+    return aq_results[cols_present].fillna(0).max(axis=1).tolist()
 
 
 def get_aq_status(data_type, classifications, results):
@@ -349,9 +344,9 @@ def get_aq_status(data_type, classifications, results):
             statuses[aq] = ('inactive', 'Quantitative data required')
         elif data_type == 'quantitative' and aq in qual_aqs:
             statuses[aq] = ('inactive', 'Qualitative data required')
-        elif aq_num in [5, 6] and not has_rrf:
+        elif aq_num in [3, 4] and not has_rrf:
             statuses[aq] = ('inactive', 'No features classified as RRF')
-        elif aq_num in [7, 8] and not has_nrf:
+        elif aq_num in [5, 6] and not has_nrf:
             statuses[aq] = ('inactive', 'No features classified as NRF')
         elif aq_num in [10, 11] and not has_esf:
             statuses[aq] = ('inactive', 'No features classified as ESF')

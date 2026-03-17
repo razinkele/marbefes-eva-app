@@ -22,6 +22,7 @@ import folium
 import folium.plugins
 import branca.colormap as cm
 import json
+from html import escape as html_escape
 import eva_calculations
 import eva_export
 
@@ -1129,6 +1130,9 @@ def server(input, output, session):
         if file_info is not None and len(file_info) > 0:
             file_path = file_info[0]["datapath"]
 
+            # Reset stale validation report from previous upload
+            validation_report.set(None)
+
             # Validate file size
             try:
                 file_size_bytes = os.path.getsize(file_path)
@@ -1141,6 +1145,7 @@ def server(input, output, session):
                     return
             except Exception as e:
                 logger.error(f"Could not check file size: {e}")
+                ui.notification_show(f"Could not process uploaded file: {e}", type="error", duration=8)
                 return
 
             # Read CSV and handle missing data
@@ -1260,6 +1265,17 @@ def server(input, output, session):
         file_path = file_info[0]["datapath"]
         file_name = file_info[0]["name"].lower()
 
+        # Validate file size
+        try:
+            file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            if file_size_mb > MAX_FILE_SIZE_MB:
+                ui.notification_show(f"Spatial file too large ({file_size_mb:.1f} MB). Maximum is {MAX_FILE_SIZE_MB} MB.", type="error", duration=8)
+                return
+        except Exception as e:
+            logger.error(f"Could not check spatial file size: {e}")
+            ui.notification_show(f"Could not process spatial file: {e}", type="error", duration=8)
+            return
+
         try:
             if file_name.endswith('.zip'):
                 # Zipped shapefile - read via zip:// protocol
@@ -1284,7 +1300,7 @@ def server(input, output, session):
                 gdf = gdf.to_crs(epsg=4326)
                 logger.info(f"Reprojected from {original_crs.get()} to EPSG:4326")
             except Exception as e:
-                ui.notification_show(f"CRS reprojection failed: {e}. File used without reprojection.", type="warning", duration=8)
+                ui.notification_show(f"CRS reprojection failed: {e}. Spatial file could not be loaded.", type="error", duration=8)
                 return
         elif gdf.crs is None:
             gdf = gdf.set_crs(epsg=4326)
@@ -1302,6 +1318,7 @@ def server(input, output, session):
                 subzone_col = non_geom_cols[0]
             else:
                 logger.error("GeoJSON has no attribute columns to use as Subzone ID")
+                ui.notification_show("Spatial file has no attribute columns for Subzone ID matching.", type="error", duration=8)
                 return
 
         if subzone_col != 'Subzone ID':
@@ -1556,7 +1573,7 @@ def server(input, output, session):
                             ui.p("Features rare at regional or national level", class_="classification-help"),
                             ui.input_checkbox_group(
                                 f"class_rarity_{feature}", "",
-                                choices={"RRF": "RRF (Regionally Rare) \u2192 AQ5/AQ6", "NRF": "NRF (Nationally Rare) \u2192 AQ7/AQ8"},
+                                choices={"RRF": "RRF (Regionally Rare) \u2192 AQ3/AQ4", "NRF": "NRF (Nationally Rare) \u2192 AQ5/AQ6"},
                                 selected=[c for c in current if c in ['RRF', 'NRF']],
                                 inline=True
                             ),
@@ -1707,9 +1724,11 @@ def server(input, output, session):
         lrf_threshold = input.lrf_threshold() / 100  # Convert from percentage to decimal
         concentration_pct = int(input.concentration_percentile())
 
-        # Step 1: Rescale data
-        rescaled_qual = eva_calculations.rescale_qualitative(df)
-        rescaled_quant = eva_calculations.rescale_quantitative(df)
+        # Step 1: Rescale data (only compute the variant matching data type)
+        empty_df = pd.DataFrame(index=df.index, columns=[c for c in df.columns if c != 'Subzone ID'])
+        empty_df.insert(0, 'Subzone ID', df['Subzone ID'])
+        rescaled_qual = eva_calculations.rescale_qualitative(df) if data_type == "qualitative" else empty_df
+        rescaled_quant = eva_calculations.rescale_quantitative(df) if data_type == "quantitative" else empty_df
 
         # Step 2: Classify features using data and user input
         classifications = eva_calculations.classify_features(df, user_classifications, lrf_threshold=lrf_threshold)
@@ -1944,13 +1963,14 @@ def server(input, output, session):
 
         # Add headers with Bootstrap tooltips
         for col in display_cols:
+            safe_col = html_escape(str(col))
             tooltip = eva_calculations.get_aq_tooltip(col)
             if tooltip:
                 # Use Bootstrap tooltip with data-bs attributes
-                escaped_tooltip = tooltip.replace('"', '&quot;')
-                html += f'<th class="has-tooltip" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" title="{escaped_tooltip}">{col}</th>'
+                escaped_tooltip = html_escape(tooltip)
+                html += f'<th class="has-tooltip" data-bs-toggle="tooltip" data-bs-placement="top" data-bs-html="true" title="{escaped_tooltip}">{safe_col}</th>'
             else:
-                html += f'<th>{col}</th>'
+                html += f'<th>{safe_col}</th>'
 
         html += """
                 </tr>
@@ -1980,7 +2000,7 @@ def server(input, output, session):
                     else:
                         html += f'<td>{value}</td>'
                 else:
-                    html += f'<td>{value}</td>'
+                    html += f'<td>{html_escape(str(value))}</td>'
             html += "</tr>"
 
         html += """
@@ -2243,6 +2263,7 @@ def server(input, output, session):
         df = uploaded_data.get()
         if results is not None and df is not None:
             updated = store.copy()
+            updated[ec_name] = store[ec_name].copy()  # deep-copy inner dict to avoid aliasing
             updated[ec_name]['results'] = results.copy()
             updated[ec_name]['classifications'] = feature_classifications.get().copy()
             updated[ec_name]['data_type'] = input.data_type()
