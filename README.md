@@ -16,6 +16,11 @@ EVA is a framework for evaluating the ecological value of marine areas by scorin
   - Multiple basemaps, adjustable opacity
   - Supports GeoJSON, zipped Shapefiles, and GeoPackage uploads
   - Automatic CRS detection and reprojection to WGS84
+- **Physical Accounts** - SEEA EA physical natural capital accounting
+  - Ecosystem Extent Account from spatial grid (EUNIS Level 3 habitats)
+  - Supply Table for societal benefits (configurable, 5 defaults)
+  - Habitat type categorical map visualization
+  - Excel export (standalone or combined with EVA)
 - **Export** - Download results as Excel or CSV
 
 ## Quick Start
@@ -67,7 +72,14 @@ A sample grid is provided at `data/test_grid.geojson` with 10 hexagonal cells ne
 
 ```
 app.py                  # Main Shiny application (UI + server)
+eva_config.py           # EVA constants and metadata
+eva_calculations.py     # EVA calculation functions
+eva_export.py           # EVA Excel export
+pa_config.py            # Physical Accounts constants and EUNIS reference
+pa_calculations.py      # Physical Accounts calculation functions
+pa_export.py            # Physical Accounts Excel export
 requirements.txt        # Python dependencies
+tests/                  # Unit tests
 data/
   test_grid.geojson     # Sample hexagonal grid for testing
   sample_data.csv       # Sample CSV dataset
@@ -75,6 +87,7 @@ www/
   marbefes.png          # MARBEFES logo
   iecs.png              # IECS logo
 docs/plans/             # Design and implementation documents
+docs/specs/             # Design specifications
 ```
 
 ## Requirements
