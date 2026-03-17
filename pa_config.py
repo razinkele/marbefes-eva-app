@@ -10,9 +10,9 @@ the structure of eva_config.py.
 import re
 
 # ---------------------------------------------------------------------------
-# Module version
+# Module version (from centralized version.py)
 # ---------------------------------------------------------------------------
-PA_MODULE_VERSION = "1.0.0"
+from version import PA_MODULE_VERSION
 
 # ---------------------------------------------------------------------------
 # Area unit conversions  (factors to convert to square metres)

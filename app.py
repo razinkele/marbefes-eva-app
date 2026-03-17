@@ -28,6 +28,7 @@ import eva_export
 import pa_config
 import pa_calculations
 import pa_export
+from version import __version__ as APP_VERSION_STR, get_version_info
 
 from eva_config import (
     MAX_FEATURES, PREVIEW_ROWS_LIMIT, RESULTS_DISPLAY_LIMIT, MAX_FILE_SIZE_MB,
@@ -953,13 +954,68 @@ A2, 1, 1, 0, ...""",
     ),
 
     ui.nav_panel(
-        "📖 Method",
+        "📖 Help & Method",
         ui.div(
             ui.div(
-                ui.h2("📖 EVA Methodology Reference", style="color: #006994; font-weight: 700; margin-bottom: 1.5rem;"),
+                ui.h2("📖 Help & Methodology Reference", style="color: #006994; font-weight: 700; margin-bottom: 1.5rem;"),
                 ui.p(
-                    "Comprehensive guide to the Ecological Value Assessment framework terminology and methodology.",
+                    "Comprehensive guide, user manual, and methodology reference for the MARBEFES EVA application.",
                     style="font-size: 1.1rem; color: #6c757d; margin-bottom: 2rem;"
+                )
+            ),
+
+            # Version and User Manual card
+            ui.card(
+                ui.card_header("📚 User Manual & Version Info"),
+                ui.div(
+                    ui.layout_column_wrap(
+                        ui.div(
+                            ui.h4("📖 User Manual", style="color: #006994; font-weight: 700; margin-bottom: 0.5rem;"),
+                            ui.p("Complete guide covering all features of the application:", style="margin-bottom: 0.5rem;"),
+                            ui.tags.ul(
+                                ui.tags.li("Data Input and CSV format requirements"),
+                                ui.tags.li("EC Features configuration and classification guide"),
+                                ui.tags.li("Understanding AQ scores and EV calculation"),
+                                ui.tags.li("Physical Accounts (SEEA EA) — extent and supply tables"),
+                                ui.tags.li("Visualization and Map features"),
+                                ui.tags.li("Excel export formats and contents"),
+                                ui.tags.li("Troubleshooting common issues"),
+                                ui.tags.li("Complete glossary of terms"),
+                                style="line-height: 2; color: #495057;"
+                            ),
+                            ui.p(
+                                "The full user manual is available at: ",
+                                ui.code("docs/USER_MANUAL.md"),
+                                style="margin-top: 1rem; color: #6c757d; font-size: 0.95rem;"
+                            ),
+                            style="padding: 1rem;"
+                        ),
+                        ui.div(
+                            ui.h4("⚙️ Version Information", style="color: #006994; font-weight: 700; margin-bottom: 0.5rem;"),
+                            ui.p(f"Application Version: ", ui.strong(f"v{APP_VERSION_STR}"), style="margin: 0.3rem 0;"),
+                            ui.p(f"EVA Module: v{get_version_info()['eva_module']}", style="margin: 0.3rem 0; color: #6c757d;"),
+                            ui.p(f"PA Module: v{get_version_info()['pa_module']}", style="margin: 0.3rem 0; color: #6c757d;"),
+                            ui.p(f"Build Date: {get_version_info()['build_date']}", style="margin: 0.3rem 0; color: #6c757d;"),
+                            ui.hr(),
+                            ui.h5("📋 Recent Changes", style="color: #006994; font-weight: 600; margin-top: 1rem;"),
+                            ui.tags.ul(
+                                ui.tags.li("Physical Accounts module (SEEA EA)"),
+                                ui.tags.li("Critical bug fixes in AQ mapping"),
+                                ui.tags.li("XSS security fix"),
+                                ui.tags.li("Vectorized EV calculation"),
+                                ui.tags.li("Centralized version management"),
+                                style="line-height: 1.8; color: #495057; font-size: 0.9rem;"
+                            ),
+                            ui.p(
+                                "Full changelog: ",
+                                ui.code("CHANGELOG.md"),
+                                style="margin-top: 0.5rem; color: #6c757d; font-size: 0.9rem;"
+                            ),
+                            style="padding: 1rem; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 8px;"
+                        ),
+                        width=1/2
+                    ),
+                    style="padding: 1rem;"
                 )
             ),
 
@@ -989,7 +1045,7 @@ A2, 1, 1, 0, ...""",
 
     title=ui.div(
         ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 35px; margin-right: 10px;">'),
-        ui.span("MARBEFES EVA Phase 2", style="font-weight: 700;"),
+        ui.span(f"MARBEFES EVA v{APP_VERSION_STR}", style="font-weight: 700;"),
         style="display: flex; align-items: center;",
         class_="logo-container"
     ),

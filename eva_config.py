@@ -6,9 +6,9 @@ EVA application.  Extracted from app.py to keep a single source of truth.
 """
 
 # ---------------------------------------------------------------------------
-# Application version
+# Application version (from centralized version.py)
 # ---------------------------------------------------------------------------
-APP_VERSION = '2.1.2'
+from version import __version__ as APP_VERSION
 
 # ---------------------------------------------------------------------------
 # Calculation constants

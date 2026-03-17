@@ -1,8 +1,10 @@
-# MARBEFES EVA Phase 2
+# MARBEFES EVA v3.0.0
 
 Ecological Value Assessment (EVA) web application for the [MARBEFES](https://marbefes.eu/) project, funded by the European Union's Horizon Europe Research Programme.
 
 EVA is a framework for evaluating the ecological value of marine areas by scoring ecosystem components (species or habitats) across spatial subzones using 15 standardised Assessment Questions (AQ1-AQ15), producing an Ecological Value (EV) score on a 0-5 scale.
+
+**Current version:** 3.0.0 "Physical Accounts" (2026-03-16) | [Changelog](CHANGELOG.md) | [User Manual](docs/USER_MANUAL.md)
 
 ## Features
 
@@ -73,12 +75,15 @@ A sample grid is provided at `data/test_grid.geojson` with 10 hexagonal cells ne
 ```
 app.py                  # Main Shiny application (UI + server)
 eva_config.py           # EVA constants and metadata
+version.py              # Centralized version management
+eva_config.py           # EVA constants and metadata
 eva_calculations.py     # EVA calculation functions
 eva_export.py           # EVA Excel export
 pa_config.py            # Physical Accounts constants and EUNIS reference
 pa_calculations.py      # Physical Accounts calculation functions
 pa_export.py            # Physical Accounts Excel export
 requirements.txt        # Python dependencies
+CHANGELOG.md            # Release history
 tests/                  # Unit tests
 data/
   test_grid.geojson     # Sample hexagonal grid for testing
@@ -86,8 +91,10 @@ data/
 www/
   marbefes.png          # MARBEFES logo
   iecs.png              # IECS logo
-docs/plans/             # Design and implementation documents
-docs/specs/             # Design specifications
+docs/
+  USER_MANUAL.md        # Comprehensive user manual
+  plans/                # Implementation plans
+  specs/                # Design specifications
 ```
 
 ## Requirements
