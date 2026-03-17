@@ -107,18 +107,18 @@ def rescale_quantitative(df):
         min_val = df[col].min()   # skipna=True by default
         max_val = df[col].max()
 
-        # Fill NaN with 0 only for the output values
-        values = df[col].fillna(0)
+        # Track which cells were originally NaN
+        nan_mask = df[col].isna()
 
         # Check for division by zero and handle NaN
         if pd.isna(min_val) or pd.isna(max_val):
             # All values are NaN, set to 0
             rescaled[col] = 0
         elif max_val > min_val:
-            # Rescale to 0-MAX_EV_SCALE using true data range
-            rescaled[col] = MAX_EV_SCALE * (values - min_val) / (max_val - min_val)
+            # Rescale non-NaN values to 0-MAX_EV_SCALE using true data range
+            rescaled[col] = MAX_EV_SCALE * (df[col] - min_val) / (max_val - min_val)
 
-            # Ensure no NaN in output
+            # Set originally-NaN cells to 0 (not rescaled, just absent)
             rescaled[col] = rescaled[col].fillna(0)
         else:
             # All non-NaN values are the same
