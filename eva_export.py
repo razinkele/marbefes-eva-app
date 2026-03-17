@@ -9,6 +9,7 @@ import io
 import logging
 
 import numpy as np
+import openpyxl
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -471,13 +472,13 @@ def _apply_styling(workbook):
 
 
 # ---------------------------------------------------------------------------
-# Public entry point
+# Public entry points
 # ---------------------------------------------------------------------------
 
-def generate_workbook(results, uploaded_data, user_classifications,
-                      data_type, metadata, ec_store):
+def build_workbook(results, uploaded_data, user_classifications,
+                   data_type, metadata, ec_store, pa_summary_data=None):
     """
-    Generate a complete Excel workbook with all analysis results.
+    Build and return a complete Excel workbook with all analysis results.
 
     Parameters
     ----------
@@ -494,21 +495,23 @@ def generate_workbook(results, uploaded_data, user_classifications,
     ec_store : dict
         Mapping of ``{ec_name: {data, data_type, classifications,
         results, feature_count}}``.
+    pa_summary_data : object, optional
+        Physical Accounts summary data for combined PA export (reserved for
+        future use by the PA module).
 
     Returns
     -------
-    io.BytesIO
-        Buffer containing the finished ``.xlsx`` workbook.
+    openpyxl.Workbook
+        The finished workbook object.
     """
-    # Handle null case
+    # Handle null case — return a minimal Workbook instead of BytesIO
     if results is None or uploaded_data is None:
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            pd.DataFrame({"Message": ["No data available"]}).to_excel(
-                writer, sheet_name="Info", index=False
-            )
-        buffer.seek(0)
-        return buffer
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Info"
+        ws.append(["Message"])
+        ws.append(["No data available"])
+        return wb
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -529,5 +532,16 @@ def generate_workbook(results, uploaded_data, user_classifications,
         # Professional styling, conditional formatting, tab colors
         _apply_styling(writer.book)
 
+    buffer.seek(0)
+    return openpyxl.load_workbook(buffer)
+
+
+def generate_workbook(results, uploaded_data, user_classifications,
+                      data_type, metadata, ec_store):
+    """Backward-compatible entry point — returns io.BytesIO buffer."""
+    wb = build_workbook(results, uploaded_data, user_classifications,
+                        data_type, metadata, ec_store)
+    buffer = io.BytesIO()
+    wb.save(buffer)
     buffer.seek(0)
     return buffer
