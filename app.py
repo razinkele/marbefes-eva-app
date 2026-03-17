@@ -25,6 +25,9 @@ import json
 from html import escape as html_escape
 import eva_calculations
 import eva_export
+import pa_config
+import pa_calculations
+import pa_export
 
 from eva_config import (
     MAX_FEATURES, PREVIEW_ROWS_LIMIT, RESULTS_DISPLAY_LIMIT, MAX_FILE_SIZE_MB,
@@ -887,6 +890,69 @@ A2, 1, 1, 0, ...""",
     ),
 
     ui.nav_panel(
+        "📋 Physical Accounts",
+        ui.layout_sidebar(
+            ui.sidebar(
+                ui.div(
+                    ui.h5("🏛️ Study Area", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.input_text("pa_eaa_name", "EAA Name:", placeholder="e.g. Lithuanian Coast MPA"),
+                    ui.input_text("pa_boundary_desc", "Boundary Description:", placeholder="Describe the study area boundary"),
+                    ui.input_numeric("pa_accounting_year", "Accounting Year:", value=2024, min=1990, max=2100),
+                ),
+                ui.hr(),
+                ui.div(
+                    ui.h5("🌿 EUNIS Habitats", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.input_selectize(
+                        "pa_habitat_select",
+                        "Select Habitat Types:",
+                        choices={h["code"]: f"{h['code']} - {h['name']}" for h in pa_config.EUNIS_HABITATS},
+                        multiple=True,
+                        options={"placeholder": "Search and select habitats..."}
+                    ),
+                    ui.input_text("pa_custom_habitat_code", "Custom Code:", placeholder="e.g. MB999"),
+                    ui.input_text("pa_custom_habitat_name", "Custom Name:", placeholder="e.g. Local reef habitat"),
+                    ui.input_action_button("pa_add_custom_habitat", "Add Custom Habitat", class_="btn-outline-secondary btn-sm", style="margin-top: 0.5rem;"),
+                ),
+                ui.hr(),
+                ui.div(
+                    ui.h5("📊 Benefits", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.input_checkbox_group(
+                        "pa_benefits_select",
+                        "Active Benefits:",
+                        choices={b["name"]: f"{b['name']} ({b['unit']})" for b in pa_config.DEFAULT_BENEFITS},
+                        selected=[b["name"] for b in pa_config.DEFAULT_BENEFITS],
+                    ),
+                    ui.input_text("pa_custom_benefit_name", "Custom Benefit Name:", placeholder="e.g. Aquaculture"),
+                    ui.input_text("pa_custom_benefit_unit", "Unit:", placeholder="e.g. tonnes"),
+                    ui.input_action_button("pa_add_custom_benefit", "Add Custom Benefit", class_="btn-outline-secondary btn-sm", style="margin-top: 0.5rem;"),
+                ),
+                ui.hr(),
+                ui.div(
+                    ui.h5("⚙️ Settings", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.input_select("pa_area_unit", "Area Unit:", choices={"Ha": "Hectares (Ha)", "km2": "Square kilometres (km²)"}, selected="Ha"),
+                    ui.download_button("pa_download_standalone", "📊 Download PA Report (Excel)", class_="btn-primary", style="width: 100%; margin-top: 1rem;"),
+                    ui.download_button("pa_download_combined", "📊 Download Combined EVA+PA (Excel)", class_="btn-secondary", style="width: 100%; margin-top: 0.5rem;"),
+                ),
+                width=380
+            ),
+            ui.div(
+                ui.card(
+                    ui.card_header("🗺️ Habitat Assignment"),
+                    ui.div(ui.output_ui("pa_habitat_assignment_ui"), style="padding: 1rem;")
+                ),
+                ui.card(
+                    ui.card_header("📐 Ecosystem Extent Account"),
+                    ui.div(ui.output_ui("pa_extent_ui"), style="padding: 1rem;")
+                ),
+                ui.card(
+                    ui.card_header("📊 Supply Table"),
+                    ui.div(ui.output_ui("pa_supply_ui"), style="padding: 1rem;")
+                ),
+            )
+        )
+    ),
+
+    ui.nav_panel(
         "📖 Method",
         ui.div(
             ui.div(
@@ -949,6 +1015,7 @@ def server(input, output, session):
     geo_data = reactive.Value(None)  # GeoDataFrame with grid geometries
     original_crs = reactive.Value(None)  # Original CRS string from uploaded GeoJSON
     geo_match_info = reactive.Value(None)  # Dict with match statistics
+    geo_data_full = reactive.Value(None)  # Full GeoDataFrame with all attributes (for PA module)
     validation_report = reactive.Value(None)
 
     # Multi-EC support
@@ -1346,6 +1413,9 @@ def server(input, output, session):
             match_info['geo_only'] = 0
 
         geo_match_info.set(match_info)
+
+        # Store full GeoDataFrame for Physical Accounts habitat auto-detection
+        geo_data_full.set(gdf.copy())
 
         # Keep only Subzone ID and geometry
         gdf = gdf[['Subzone ID', 'geometry']]
@@ -2710,6 +2780,56 @@ def server(input, output, session):
                 )
             )
 
+        if input.map_variable() == "Habitat Type (PA)":
+            assignments = pa_habitat_assignments.get()
+            if not assignments:
+                return ui.p("No habitat assignments available.", style="color: #6c757d; text-align: center; padding: 2rem;")
+
+            map_gdf = gdf.merge(
+                pd.DataFrame(list(assignments.items()), columns=["Subzone ID", "habitat_code"]),
+                on="Subzone ID", how="inner"
+            )
+            map_gdf["habitat_name"] = map_gdf["habitat_code"].map(lambda c: pa_config.EUNIS_LOOKUP.get(c, c))
+
+            unique_habitats = map_gdf["habitat_code"].unique().tolist()
+            color_map = {h: pa_config.HABITAT_PALETTE[i % len(pa_config.HABITAT_PALETTE)]
+                        for i, h in enumerate(unique_habitats)}
+
+            bounds = map_gdf.total_bounds
+            center = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
+            zoom = auto_zoom_level(bounds)
+            tiles = BASEMAP_TILES.get(input.map_basemap(), "cartodbpositron")
+            m = folium.Map(location=center, zoom_start=zoom, tiles=tiles)
+
+            def habitat_style(feature):
+                code = feature["properties"].get("habitat_code", "")
+                return {
+                    "fillColor": color_map.get(code, "#999999"),
+                    "color": "#333333",
+                    "weight": 0.5,
+                    "fillOpacity": float(input.map_opacity()),
+                }
+
+            folium.GeoJson(
+                map_gdf.to_json(),
+                style_function=habitat_style,
+                tooltip=folium.GeoJsonTooltip(
+                    fields=["Subzone ID", "habitat_code", "habitat_name"],
+                    aliases=["Subzone:", "EUNIS Code:", "Habitat:"],
+                )
+            ).add_to(m)
+
+            legend_html = '<div style="position: fixed; bottom: 30px; left: 30px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); z-index: 1000; font-size: 0.85rem;">'
+            legend_html += '<strong>Habitat Types</strong><br>'
+            for code in unique_habitats:
+                name = pa_config.EUNIS_LOOKUP.get(code, code)
+                color = color_map[code]
+                legend_html += f'<span style="background:{color}; width:12px; height:12px; display:inline-block; margin-right:5px; border-radius:2px;"></span>{code} - {name}<br>'
+            legend_html += '</div>'
+            m.get_root().html.add_child(folium.Element(legend_html))
+
+            return ui.HTML(m._repr_html_())
+
         if results is None:
             return ui.div(
                 ui.p(
@@ -2763,6 +2883,337 @@ def server(input, output, session):
                     style="text-align: center; color: #d32f2f; padding: 2rem;"
                 )
             )
+
+    # =====================================================================
+    # Physical Accounts (PA) server logic
+    # =====================================================================
+
+    # PA reactive values
+    pa_habitat_assignments = reactive.Value({})
+    pa_custom_habitats = reactive.Value([])
+    pa_custom_benefits = reactive.Value([])
+
+    @output
+    @render.ui
+    def pa_habitat_assignment_ui():
+        gdf = geo_data.get()
+        gdf_full = geo_data_full.get()
+        if gdf is None:
+            return ui.div(
+                ui.p("⬆️ Upload a spatial grid file in the Data Input tab to begin habitat assignment.",
+                     style="text-align: center; color: #6c757d; padding: 2rem; font-size: 1.1rem;")
+            )
+
+        subzone_ids = gdf["Subzone ID"].tolist()
+        selected_habitats = list(input.pa_habitat_select() or [])
+        custom_habs = pa_custom_habitats.get()
+        all_habitat_choices = {}
+        for h in pa_config.EUNIS_HABITATS:
+            if h["code"] in selected_habitats:
+                all_habitat_choices[h["code"]] = f"{h['code']} - {h['name']}"
+        for ch in custom_habs:
+            all_habitat_choices[ch["code"]] = f"{ch['code']} - {ch['name']}"
+
+        # Auto-detect
+        auto_col = None
+        auto_assignments = {}
+        if gdf_full is not None:
+            auto_col = pa_calculations.detect_habitat_column(list(gdf_full.columns))
+            if auto_col:
+                for _, row in gdf_full.iterrows():
+                    sid = str(row.get("Subzone ID", ""))
+                    val = str(row.get(auto_col, ""))
+                    if sid and val:
+                        auto_assignments[sid] = val
+
+        items = []
+        if auto_col:
+            items.append(ui.p(f"✅ Auto-detected habitat column: '{auto_col}'",
+                             style="color: #28a745; font-weight: 600; margin-bottom: 1rem;"))
+        else:
+            items.append(ui.p("ℹ️ No habitat column detected — assign habitats manually below.",
+                             style="color: #ff9800; margin-bottom: 1rem;"))
+
+        if not all_habitat_choices:
+            items.append(ui.p("👈 Select habitat types in the sidebar first.", style="color: #6c757d;"))
+        else:
+            for sid in subzone_ids:
+                default = auto_assignments.get(sid, "")
+                items.append(
+                    ui.div(
+                        ui.div(ui.strong(sid), style="width: 120px; display: inline-block;"),
+                        ui.input_select(
+                            f"pa_assign_{sid}", "",
+                            choices={"": "(unassigned)", **all_habitat_choices},
+                            selected=default if default in all_habitat_choices else "",
+                            width="300px"
+                        ),
+                        style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.3rem;"
+                    )
+                )
+
+        return ui.div(*items)
+
+    @reactive.Effect
+    def _update_pa_assignments():
+        gdf = geo_data.get()
+        if gdf is None:
+            pa_habitat_assignments.set({})
+            return
+        assignments = {}
+        for sid in gdf["Subzone ID"].tolist():
+            try:
+                val = input[f"pa_assign_{sid}"]()
+                if val:
+                    assignments[sid] = val
+            except Exception:
+                pass
+        pa_habitat_assignments.set(assignments)
+
+    @output
+    @render.ui
+    def pa_extent_ui():
+        gdf = geo_data.get()
+        assignments = pa_habitat_assignments.get()
+        if gdf is None:
+            return ui.p("Upload a spatial grid to compute extent.", style="color: #6c757d; text-align: center; padding: 2rem;")
+        if not assignments:
+            return ui.p("Assign habitats to subzones above to compute extent.", style="color: #6c757d; text-align: center; padding: 2rem;")
+
+        unit = input.pa_area_unit()
+        crs = original_crs.get()
+        extent_df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs)
+
+        if extent_df.empty:
+            return ui.p("No extent data computed.", style="color: #6c757d;")
+
+        return ui.TagList(
+            ui.output_table("pa_extent_table"),
+            ui.div(
+                ui.p("ℹ️ Opening/closing stock tracking and change analysis will be available in a future version.",
+                     style="color: #6c757d; font-size: 0.9rem; margin-top: 1rem;"),
+                class_="info-box"
+            )
+        )
+
+    @output
+    @render.table
+    def pa_extent_table():
+        gdf = geo_data.get()
+        assignments = pa_habitat_assignments.get()
+        if gdf is None or not assignments:
+            return pd.DataFrame()
+        unit = input.pa_area_unit()
+        crs = original_crs.get()
+        df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs)
+        df["area"] = df["area"].round(2)
+        df["pct_total"] = df["pct_total"].round(1)
+        df.columns = ["EUNIS Code", "Habitat Name", f"Area ({unit})", "% of Total"]
+        return df
+
+    @output
+    @render.ui
+    def pa_supply_ui():
+        assignments = pa_habitat_assignments.get()
+        selected_benefits = list(input.pa_benefits_select() or [])
+        custom_bens = pa_custom_benefits.get()
+        all_benefits = selected_benefits + [b["name"] for b in custom_bens]
+
+        if not assignments:
+            return ui.p("Assign habitats first to enter supply data.", style="color: #6c757d; text-align: center; padding: 2rem;")
+        if not all_benefits:
+            return ui.p("Select at least one benefit in the sidebar.", style="color: #6c757d; text-align: center; padding: 2rem;")
+
+        habitat_codes = sorted(set(assignments.values()))
+
+        grid_size = len(all_benefits) * len(habitat_codes)
+        items = []
+        if grid_size > 100:
+            items.append(ui.p(f"⚠️ Large grid ({grid_size} cells). Consider reducing habitats or benefits.",
+                             style="color: #ff9800; font-weight: 600;"))
+
+        header_cells = [ui.tags.th("Benefit"), ui.tags.th("Unit")]
+        for code in habitat_codes:
+            name = pa_config.EUNIS_LOOKUP.get(code, code)
+            header_cells.append(ui.tags.th(code, title=name, style="cursor: help;"))
+
+        body_rows = []
+        for ben_name in all_benefits:
+            slug = pa_config.benefit_slug(ben_name)
+            ben_unit = "units"
+            for b in pa_config.DEFAULT_BENEFITS:
+                if b["name"] == ben_name:
+                    ben_unit = b["unit"]
+                    break
+            for cb in custom_bens:
+                if cb["name"] == ben_name:
+                    ben_unit = cb["unit"]
+                    break
+
+            cells = [ui.tags.td(ui.strong(ben_name)), ui.tags.td(ben_unit)]
+            for code in habitat_codes:
+                input_id = f"supply_{slug}_{code}"
+                cells.append(ui.tags.td(
+                    ui.input_numeric(input_id, "", value=None, width="100px"),
+                    style="padding: 2px;"
+                ))
+            body_rows.append(ui.tags.tr(*cells))
+
+        items.append(ui.tags.table(
+            ui.tags.thead(ui.tags.tr(*header_cells)),
+            ui.tags.tbody(*body_rows),
+            class_="table table-sm table-bordered",
+            style="font-size: 0.9rem;"
+        ))
+
+        supply_data = _collect_pa_supply_data(all_benefits, habitat_codes)
+        completeness = pa_calculations.validate_completeness(supply_data, habitat_codes, all_benefits)
+        items.append(ui.p(
+            f"📊 Data completeness: {completeness['filled']} of {completeness['total']} cells filled ({completeness['pct']}%)",
+            style=f"font-weight: 600; color: {'#28a745' if completeness['pct'] == 100 else '#ff9800'}; margin-top: 1rem;"
+        ))
+
+        items.append(ui.div(
+            ui.p("ℹ️ Use Table (sector disaggregation) and Condition Account will be available in a future version.",
+                 style="color: #6c757d; font-size: 0.9rem; margin-top: 1rem;"),
+            class_="info-box"
+        ))
+
+        return ui.div(*items)
+
+    def _collect_pa_supply_data(benefit_names, habitat_codes):
+        supply_data = {}
+        for name in benefit_names:
+            slug = pa_config.benefit_slug(name)
+            quantities = {}
+            for code in habitat_codes:
+                try:
+                    val = input[f"supply_{slug}_{code}"]()
+                    if val is not None:
+                        quantities[code] = float(val)
+                except Exception:
+                    pass
+            if quantities:
+                supply_data[name] = quantities
+        return supply_data
+
+    @reactive.Effect
+    @reactive.event(input.pa_add_custom_habitat)
+    def _add_custom_habitat():
+        code = input.pa_custom_habitat_code().strip()
+        name = input.pa_custom_habitat_name().strip()
+        if not code or not name:
+            ui.notification_show("Please enter both code and name.", type="warning")
+            return
+        current = pa_custom_habitats.get().copy()
+        if any(h["code"] == code for h in current):
+            ui.notification_show(f"Habitat code '{code}' already exists.", type="warning")
+            return
+        current.append({"code": code, "name": name})
+        pa_custom_habitats.set(current)
+        pa_config.EUNIS_LOOKUP[code] = name
+        ui.notification_show(f"Added custom habitat: {code} - {name}", type="message")
+
+    @reactive.Effect
+    @reactive.event(input.pa_add_custom_benefit)
+    def _add_custom_benefit():
+        name = input.pa_custom_benefit_name().strip()
+        unit = input.pa_custom_benefit_unit().strip()
+        if not name or not unit:
+            ui.notification_show("Please enter both name and unit.", type="warning")
+            return
+        current = pa_custom_benefits.get().copy()
+        all_names = list(input.pa_benefits_select() or []) + [b["name"] for b in current]
+        if name in all_names:
+            ui.notification_show(f"Benefit '{name}' already exists.", type="warning")
+            return
+        current.append({"name": name, "unit": unit})
+        pa_custom_benefits.set(current)
+        ui.notification_show(f"Added custom benefit: {name} ({unit})", type="message")
+
+    @render.download(filename=lambda: f"MARBEFES_PhysicalAccounts_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+    def pa_download_standalone():
+        gdf = geo_data.get()
+        assignments = pa_habitat_assignments.get()
+        unit = input.pa_area_unit()
+        crs = original_crs.get()
+
+        extent_df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs) if gdf is not None and assignments else pd.DataFrame()
+
+        selected_benefits = list(input.pa_benefits_select() or [])
+        custom_bens = pa_custom_benefits.get()
+        all_benefits = selected_benefits + [b["name"] for b in custom_bens]
+        habitat_codes = sorted(set(assignments.values())) if assignments else []
+
+        supply_data = _collect_pa_supply_data(all_benefits, habitat_codes)
+        supply_df = pa_calculations.assemble_supply_table(supply_data, habitat_codes)
+        completeness = pa_calculations.validate_completeness(supply_data, habitat_codes, all_benefits)
+
+        metadata = {
+            "eaa_name": input.pa_eaa_name() or "Not specified",
+            "boundary_description": input.pa_boundary_desc() or "Not specified",
+            "accounting_year": input.pa_accounting_year() or 2024,
+        }
+
+        return pa_export.generate_pa_workbook(
+            extent_df=extent_df, supply_df=supply_df,
+            assignments=assignments, metadata=metadata,
+            completeness=completeness, unit=unit,
+        )
+
+    @render.download(filename=lambda: f"MARBEFES_EVA_PA_Combined_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
+    def pa_download_combined():
+        gdf = geo_data.get()
+        assignments = pa_habitat_assignments.get()
+        unit = input.pa_area_unit()
+        crs = original_crs.get()
+
+        extent_df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs) if gdf is not None and assignments else pd.DataFrame()
+
+        selected_benefits = list(input.pa_benefits_select() or [])
+        custom_bens = pa_custom_benefits.get()
+        all_benefits = selected_benefits + [b["name"] for b in custom_bens]
+        habitat_codes = sorted(set(assignments.values())) if assignments else []
+
+        supply_data = _collect_pa_supply_data(all_benefits, habitat_codes)
+        supply_df = pa_calculations.assemble_supply_table(supply_data, habitat_codes)
+        completeness = pa_calculations.validate_completeness(supply_data, habitat_codes, all_benefits)
+
+        pa_metadata = {
+            "eaa_name": input.pa_eaa_name() or "Not specified",
+            "boundary_description": input.pa_boundary_desc() or "Not specified",
+            "accounting_year": input.pa_accounting_year() or 2024,
+        }
+
+        eva_args = {
+            "results": calculate_results(),
+            "uploaded_data": uploaded_data.get(),
+            "user_classifications": feature_classifications.get(),
+            "data_type": input.data_type(),
+            "metadata": {
+                "ec_name": input.ec_name() if input.ec_name() else "Not specified",
+                "study_area": input.study_area() if input.study_area() else "Not specified",
+                "data_description": input.data_description() if input.data_description() else "Not specified",
+            },
+            "ec_store": ec_store.get(),
+        }
+
+        return pa_export.generate_combined_workbook(
+            eva_args=eva_args,
+            pa_extent_df=extent_df, pa_supply_df=supply_df,
+            pa_assignments=assignments, pa_metadata=pa_metadata,
+            pa_completeness=completeness, pa_unit=unit,
+        )
+
+    @reactive.Effect
+    @reactive.event(pa_habitat_assignments)
+    def _update_map_variable_for_pa():
+        assignments = pa_habitat_assignments.get()
+        base_choices = ["EV", "AQ1", "AQ2", "AQ3", "AQ4", "AQ5", "AQ6", "AQ7",
+                        "AQ8", "AQ9", "AQ10", "AQ11", "AQ12", "AQ13", "AQ14", "AQ15"]
+        if assignments:
+            base_choices.append("Habitat Type (PA)")
+        ui.update_select("map_variable", choices=base_choices)
 
 
 # Create the app with static file serving
