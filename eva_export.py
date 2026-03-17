@@ -286,9 +286,16 @@ def _build_multi_ec_sheets(writer, results, ec_store):
 
 
 def _build_chart_sheets(workbook, results, ec_store):
-    """Create embedded chart sheets (EV bar, AQ heatmap, EV distribution)."""
+    """Create embedded chart sheets (EV bar, AQ heatmap, EV distribution).
+
+    Each chart is wrapped in its own try/except so one failure does not
+    prevent the others.  Failed charts produce a placeholder sheet explaining
+    the problem instead of silently disappearing.
+    """
+    chart_errors = []
+
+    # Chart 1: EV by Subzone bar chart
     try:
-        # Chart 1: EV by Subzone bar chart
         if len(ec_store) >= 2:
             ev_frames = {}
             for ec_nm, ec_data in ec_store.items():
@@ -343,8 +350,12 @@ def _build_chart_sheets(workbook, results, ec_store):
         img1.width = 800
         img1.height = 500
         ws_chart1.add_image(img1, "A1")
+    except Exception as e:
+        logger.warning("EV bar chart failed: %s", e)
+        chart_errors.append(f"EV by Subzone: {e}")
 
-        # Chart 2: AQ Heatmap
+    # Chart 2: AQ Heatmap
+    try:
         aq_columns = [col for col in results.columns if col.startswith("AQ")]
         if aq_columns:
             display_cols = aq_columns + ["EV"]
@@ -382,8 +393,12 @@ def _build_chart_sheets(workbook, results, ec_store):
             img2.width = 800
             img2.height = hm_height
             ws_chart2.add_image(img2, "A1")
+    except Exception as e:
+        logger.warning("AQ heatmap chart failed: %s", e)
+        chart_errors.append(f"AQ Heatmap: {e}")
 
-        # Chart 3: EV Distribution histogram
+    # Chart 3: EV Distribution histogram
+    try:
         fig_hist = go.Figure(data=[go.Histogram(
             x=results["EV"],
             nbinsx=20,
@@ -408,9 +423,19 @@ def _build_chart_sheets(workbook, results, ec_store):
         img3.width = 800
         img3.height = 500
         ws_chart3.add_image(img3, "A1")
-
     except Exception as e:
-        logger.warning("Chart generation failed: %s", e)
+        logger.warning("EV distribution chart failed: %s", e)
+        chart_errors.append(f"EV Distribution: {e}")
+
+    # If any charts failed, add a summary sheet explaining what happened
+    if chart_errors:
+        ws_errors = workbook.create_sheet("Chart Errors")
+        ws_errors.cell(row=1, column=1, value="Chart Generation Errors")
+        ws_errors.cell(row=2, column=1, value="The following charts could not be generated:")
+        for i, err in enumerate(chart_errors, start=3):
+            ws_errors.cell(row=i, column=1, value=err)
+        ws_errors.cell(row=len(chart_errors) + 4, column=1,
+                       value="Tip: Ensure kaleido is installed (pip install kaleido)")
 
 
 def _apply_styling(workbook):
