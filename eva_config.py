@@ -240,6 +240,12 @@ BASEMAP_TILES = {
 # ---------------------------------------------------------------------------
 # Export styling constants
 # ---------------------------------------------------------------------------
+# Chart sizing
+HEATMAP_HEIGHT_PER_ROW = 25      # pixels per row in heatmap charts
+HEATMAP_MIN_HEIGHT = 450          # minimum heatmap height in pixels
+CHART_EXPORT_WIDTH = 800          # chart image width for Excel export
+CHART_EXPORT_HEIGHT = 500         # chart image height for Excel export
+
 EXPORT_HEADER_COLOR = "006994"
 EXPORT_ALT_ROW_COLOR = "F2F2F2"
 
@@ -255,3 +261,10 @@ EXPORT_TAB_COLORS = {
 
 EXPORT_MULTI_EC_TAB_COLOR = '6F42C1'
 EXPORT_CHART_TAB_COLOR = 'FD7E14'
+
+# H3 hexagonal grid resolution presets
+HEX_PRESETS = {
+    "small": {"label": "Small (~174m edge, ~0.1 km²)", "resolution": 9},
+    "medium": {"label": "Medium (~461m edge, ~0.7 km²)", "resolution": 8},
+    "large": {"label": "Large (~1.2km edge, ~5.2 km²)", "resolution": 7},
+}
