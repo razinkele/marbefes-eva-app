@@ -15,25 +15,22 @@ from pathlib import Path
 import io
 import os
 import logging
-import plotly.graph_objects as go
-import plotly.express as px
 import geopandas as gpd
-import folium
-import folium.plugins
-import branca.colormap as cm
-import json
 from html import escape as html_escape
 import eva_calculations
 import eva_export
 import pa_config
 import pa_calculations
 import pa_export
-from version import __version__ as APP_VERSION_STR, get_version_info
+import eva_visualizations
+import eva_map
+import eva_hexgrid
+import dwca_reader
+from eva_ui import app_ui, get_aq_guide_html
 
 from eva_config import (
     MAX_FEATURES, PREVIEW_ROWS_LIMIT, RESULTS_DISPLAY_LIMIT, MAX_FILE_SIZE_MB,
-    ACRONYMS, CLASSIFICATION_BADGE_COLORS, ECEntry,
-    EVA_5CLASS_BINS, EVA_5CLASS_COLORS, EVA_5CLASS_LABELS, BASEMAP_TILES,
+    ACRONYMS, CLASSIFICATION_BADGE_COLORS, ECEntry, HEX_PRESETS,
 )
 
 # Configure logging
@@ -43,1020 +40,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Custom CSS for enhanced styling
-custom_css = """
-<style>
-    /* Main color scheme */
-    :root {
-        --primary-blue: #0066cc;
-        --secondary-blue: #4da6ff;
-        --accent-teal: #00b8d4;
-        --success-green: #28a745;
-        --ocean-blue: #006994;
-        --light-bg: #f8f9fa;
-    }
-    
-    /* Header styling */
-    .navbar {
-        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%) !important;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        padding: 0.5rem 1rem;
-    }
-    
-    .navbar-brand {
-        font-weight: 700;
-        font-size: 1.5rem;
-        color: white !important;
-        display: flex;
-        align-items: center;
-        gap: 15px;
-    }
-    
-    .logo-container {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    
-    .logo-circle {
-        width: 50px;
-        height: 50px;
-        background: linear-gradient(135deg, #fff 0%, #e3f2fd 100%);
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-weight: bold;
-        font-size: 1.2rem;
-        color: var(--ocean-blue);
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-        border: 3px solid rgba(255,255,255,0.3);
-    }
-    
-    .nav-link {
-        color: rgba(255,255,255,0.9) !important;
-        font-weight: 500;
-        transition: all 0.3s ease;
-        border-radius: 5px;
-        padding: 0.5rem 1rem;
-    }
-    
-    .nav-link:hover {
-        background-color: rgba(255,255,255,0.15);
-        color: white !important;
-    }
-    
-    .nav-link.active {
-        background-color: rgba(255,255,255,0.25) !important;
-        color: white !important;
-        font-weight: 600;
-    }
-    
-    /* Card enhancements */
-    .card {
-        border: none;
-        border-radius: 12px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.07);
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        overflow: hidden;
-    }
-    
-    .card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
-    }
-    
-    .card-header {
-        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--secondary-blue) 100%);
-        color: white;
-        font-weight: 600;
-        font-size: 1.2rem;
-        padding: 1rem 1.5rem;
-        border-bottom: none;
-    }
-    
-    .card-body {
-        padding: 1.5rem;
-    }
-    
-    /* Sidebar styling */
-    .bslib-sidebar-layout > .sidebar {
-        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
-        border-right: 2px solid #dee2e6;
-        border-radius: 8px 0 0 8px;
-        padding: 1.5rem;
-    }
-    
-    .sidebar h4 {
-        color: var(--ocean-blue);
-        font-weight: 700;
-        margin-bottom: 1rem;
-        border-bottom: 3px solid var(--accent-teal);
-        padding-bottom: 0.5rem;
-    }
-    
-    /* Button styling */
-    .btn-primary {
-        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%);
-        border: none;
-        border-radius: 8px;
-        padding: 0.6rem 1.5rem;
-        font-weight: 600;
-        transition: all 0.3s ease;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    
-    .btn-primary:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
-    }
-    
-    .btn-secondary {
-        background: linear-gradient(135deg, #6c757d 0%, #5a6268 100%);
-        border: none;
-        border-radius: 8px;
-        padding: 0.6rem 1.5rem;
-        font-weight: 600;
-    }
-    
-    /* Input styling */
-    .form-control, .form-select {
-        border: 2px solid #dee2e6;
-        border-radius: 8px;
-        padding: 0.6rem 1rem;
-        transition: all 0.3s ease;
-    }
-    
-    .form-control:focus, .form-select:focus {
-        border-color: var(--accent-teal);
-        box-shadow: 0 0 0 0.2rem rgba(0, 184, 212, 0.25);
-    }
-    
-    /* Value box enhancements */
-    .bslib-value-box {
-        border-radius: 12px;
-        border: none;
-        box-shadow: 0 4px 8px rgba(0,0,0,0.08);
-        transition: all 0.3s ease;
-    }
-    
-    .bslib-value-box:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 6px 15px rgba(0,0,0,0.12);
-    }
-    
-    .bslib-value-box .value-box-value {
-        font-size: 2.5rem;
-        font-weight: 700;
-    }
-    
-    /* Table styling */
-    table {
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    
-    table thead {
-        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--secondary-blue) 100%);
-        color: white;
-    }
-    
-    table tbody tr:hover {
-        background-color: rgba(0, 184, 212, 0.1);
-    }
-    
-    /* Markdown content */
-    .markdown-content {
-        line-height: 1.8;
-    }
-    
-    .markdown-content h3 {
-        color: var(--ocean-blue);
-        font-weight: 700;
-        margin-top: 1.5rem;
-        margin-bottom: 1rem;
-        border-left: 4px solid var(--accent-teal);
-        padding-left: 1rem;
-    }
-    
-    .markdown-content h4 {
-        color: var(--ocean-blue);
-        font-weight: 600;
-        margin-top: 1rem;
-    }
-    
-    .markdown-content code {
-        background-color: #f8f9fa;
-        padding: 0.2rem 0.4rem;
-        border-radius: 4px;
-        color: #e83e8c;
-        font-size: 0.9em;
-    }
-    
-    /* Horizontal rule */
-    hr {
-        border-top: 2px solid var(--accent-teal);
-        margin: 1.5rem 0;
-    }
-    
-    /* Welcome banner */
-    .welcome-banner {
-        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%);
-        color: white;
-        padding: 2rem;
-        border-radius: 12px;
-        margin-bottom: 1.5rem;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }
-    
-    .welcome-banner h2 {
-        font-weight: 700;
-        margin-bottom: 0.5rem;
-    }
-    
-    .welcome-banner p {
-        font-size: 1.1rem;
-        opacity: 0.95;
-    }
-    
-    /* Info boxes */
-    .info-box {
-        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-        border-left: 4px solid var(--primary-blue);
-        padding: 1rem 1.5rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-    }
-    
-    /* Footer */
-    .app-footer {
-        background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-        color: white;
-        padding: 1.5rem;
-        text-align: center;
-        margin-top: 2rem;
-        border-radius: 12px;
-        font-size: 0.9rem;
-    }
-    
-    /* Animations */
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to { opacity: 1; transform: translateY(0); }
-    }
-    
-    .card, .bslib-value-box {
-        animation: fadeIn 0.5s ease-out;
-    }
-    
-    /* Icons */
-    .icon {
-        margin-right: 8px;
-    }
-    
-    /* Responsive adjustments */
-    @media (max-width: 768px) {
-        .navbar-brand {
-            font-size: 1.2rem;
-        }
-        
-        .logo-circle {
-            width: 40px;
-            height: 40px;
-            font-size: 1rem;
-        }
-    }
-    .classification-group {
-        background: #f8f9fa;
-        border-radius: 8px;
-        padding: 0.8rem;
-        margin-bottom: 0.5rem;
-        border-left: 4px solid #006994;
-    }
-    .classification-group-header {
-        font-weight: 600;
-        color: #006994;
-        margin-bottom: 0.5rem;
-        font-size: 0.95rem;
-    }
-    .classification-help {
-        font-size: 0.8rem;
-        color: #6c757d;
-        font-style: italic;
-        margin-bottom: 0.3rem;
-    }
-    .classification-summary {
-        background: linear-gradient(135deg, #e3f2fd 0%, #f1f8e9 100%);
-        border-radius: 8px;
-        padding: 0.8rem;
-        margin-top: 1rem;
-    }
-    .feature-badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        margin-right: 4px;
-    }
-    .aq-max-cell {
-        background-color: #c8e6c9 !important;
-        font-weight: 700;
-        border: 2px solid #4caf50;
-    }
-</style>
-"""
-
-# App UI
-app_ui = ui.page_navbar(
-    ui.nav_panel(
-        "🏠 Home",
-        ui.layout_sidebar(
-            ui.sidebar(
-                ui.div(
-                    ui.div(
-                        ui.div(
-                            ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 50px; margin-right: 10px;">'),
-                            ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 50px;">'),
-                            style="display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; padding: 10px; background: white; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
-                        ),
-                        ui.h4("MARBEFES EVA", style="text-align: center; color: #006994; font-weight: 700;"),
-                        ui.p("Phase 2 Assessment Tool", style="text-align: center; color: #6c757d; font-size: 0.9rem;"),
-                        style="margin-bottom: 1.5rem;"
-                    ),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("✨ Features", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.tags.ul(
-                        ui.tags.li("📊 Calculate assessment questions (AQ)"),
-                        ui.tags.li("🌍 Compute ecological value (EV)"),
-                        ui.tags.li("📈 Aggregate total EV scores"),
-                        style="line-height: 2; color: #495057;"
-                    ),
-                    class_="info-box"
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("📋 Quick Start", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
-                    ui.p(
-                        "1. Upload your data",
-                        ui.br(),
-                        "2. Configure features",
-                        ui.br(),
-                        "3. View results",
-                        style="line-height: 2; color: #495057;"
-                    )
-                ),
-                width=320
-            ),
-            ui.div(
-                # Welcome Banner
-                ui.div(
-                    ui.div(
-                        ui.h1(
-                            ui.div(
-                                ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 60px; margin-right: 15px;">'),
-                                ui.span("MARBEFES", style="font-weight: 800;"),
-                                ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 60px; margin-left: 15px;">'),
-                                style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; justify-content: center;"
-                            ),
-                            style="margin: 0;"
-                        ),
-                        ui.h2("Ecological Value Assessment - Phase 2", style="font-weight: 300; font-size: 1.8rem; margin: 0.5rem 0;"),
-                        ui.p(
-                            "🇪🇺 Funded by the European Union's Horizon Europe Research Programme",
-                            style="font-size: 1rem; margin-top: 1rem; opacity: 0.9;"
-                        ),
-                        class_="welcome-banner"
-                    )
-                ),
-                
-                # Main content cards
-                ui.layout_column_wrap(
-                    ui.card(
-                        ui.card_header("🎯 About This Tool"),
-                        ui.div(
-                            ui.p(
-                                "This application implements Phase 2 of the Ecological Value Assessment (EVA) framework, "
-                                "providing a comprehensive toolkit for marine biodiversity assessment.",
-                                style="font-size: 1.05rem; line-height: 1.8;"
-                            ),
-                            ui.tags.ul(
-                                ui.tags.li("📍 Analyze gridded ecosystem data"),
-                                ui.tags.li("🔬 Apply multiple assessment criteria"),
-                                ui.tags.li("📊 Generate comprehensive EV scores"),
-                                ui.tags.li("💾 Export results for further analysis"),
-                                style="line-height: 2.2; font-size: 1rem;"
-                            ),
-                            class_="markdown-content"
-                        )
-                    ),
-                    
-                    ui.card(
-                        ui.card_header("🚀 Getting Started"),
-                        ui.div(
-                            ui.tags.ol(
-                                ui.tags.li(
-                                    ui.strong("📖 Learn the Methodology: "),
-                                    "Visit the Method tab for terminology and AQ guide"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("📁 Upload Your Data: "),
-                                    "Use the Data Input tab with your CSV file"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("⚙️ Configure Features: "),
-                                    "Set up your ecosystem components"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("📊 View Results: "),
-                                    "Analyze AQ scores and EV values"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("💾 Export Data: "),
-                                    "Download comprehensive results"
-                                ),
-                                style="line-height: 2.5; font-size: 1rem;"
-                            ),
-                            class_="markdown-content"
-                        )
-                    ),
-                    width=1/2
-                ),
-                
-                ui.hr(),
-                
-                # Key concepts
-                ui.card(
-                    ui.card_header("📖 Key Concepts"),
-                    ui.layout_column_wrap(
-                        ui.div(
-                            ui.h4("EVA", style="color: #006994; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Ecological Value Assessment", style="color: #6c757d; margin: 0;"),
-                            ui.p("Framework for evaluating marine ecosystem importance", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border-radius: 8px;"
-                        ),
-                        ui.div(
-                            ui.h4("EV", style="color: #00b8d4; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Ecological Value", style="color: #6c757d; margin: 0;"),
-                            ui.p("Quantitative measure of ecosystem significance", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%); border-radius: 8px;"
-                        ),
-                        ui.div(
-                            ui.h4("AQ", style="color: #28a745; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Assessment Questions", style="color: #6c757d; margin: 0;"),
-                            ui.p("Criteria for evaluating ecological features", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-radius: 8px;"
-                        ),
-                        ui.div(
-                            ui.h4("EC", style="color: #ff9800; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Ecosystem Component", style="color: #6c757d; margin: 0;"),
-                            ui.p("Species or habitats being assessed", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border-radius: 8px;"
-                        ),
-                        width=1/4
-                    )
-                ),
-                
-                # Footer
-                ui.div(
-                    ui.p(
-                        "📄 ", ui.strong("Reference: "), 
-                        "Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA)",
-                        style="margin: 0.5rem 0;"
-                    ),
-                    ui.p(
-                        "👤 ", ui.strong("Template by: "), 
-                        "A. Franco (15/10/2025)",
-                        style="margin: 0.5rem 0;"
-                    ),
-                    ui.p(
-                        "🔬 ", ui.strong("Project: "), 
-                        "MARBEFES - Marine Biodiversity and Ecosystem Functioning",
-                        style="margin: 0.5rem 0;"
-                    ),
-                    class_="app-footer"
-                )
-            )
-        )
-    ),
-    
-    ui.nav_panel(
-        "📁 Data Input",
-        ui.layout_sidebar(
-            ui.sidebar(
-                ui.div(
-                    ui.h5("🗂️ EC Management", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_select(
-                        "select_ec",
-                        "Saved ECs:",
-                        choices=[],
-                        width="100%"
-                    ),
-                    ui.div(
-                        ui.input_action_button("save_ec", "💾 Save Current EC", class_="btn-primary btn-sm", style="margin-right: 0.3rem;"),
-                        ui.input_action_button("new_ec", "➕ New EC", class_="btn-outline-secondary btn-sm", style="margin-right: 0.3rem;"),
-                        ui.input_action_button("delete_ec", "🗑️ Delete", class_="btn-outline-danger btn-sm"),
-                        style="display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem;"
-                    ),
-                    ui.output_ui("ec_list_summary"),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("📝 Metadata", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_text(
-                        "ec_name", 
-                        "🏷️ EC Name:", 
-                        placeholder="Enter ecosystem component name"
-                    ),
-                    ui.input_text(
-                        "study_area", 
-                        "📍 Study Area:", 
-                        placeholder="Enter study area"
-                    ),
-                    ui.input_select(
-                        "data_type",
-                        "📊 Data Type:",
-                        choices=["TO SPECIFY", "qualitative", "quantitative"]
-                    ),
-                    ui.input_text_area(
-                        "data_description", 
-                        "📄 Description:", 
-                        placeholder="Describe your data",
-                        rows=4
-                    ),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("📤 Upload Data", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_file(
-                        "upload_data", 
-                        "Choose CSV File", 
-                        accept=[".csv"], 
-                        multiple=False,
-                        button_label="Browse...",
-                    ),
-                    ui.download_button(
-                        "download_template", 
-                        "⬇️ Download Template",
-                        class_="btn-secondary",
-                        style="margin-top: 1rem; width: 100%;"
-                    ),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("🗺️ Upload Spatial Grid", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.p(
-                        "Optional: Upload a spatial grid file to enable map visualization.",
-                        style="font-size: 0.9rem; color: #6c757d; line-height: 1.6;"
-                    ),
-                    ui.input_file(
-                        "upload_geojson",
-                        "Choose Spatial File",
-                        accept=[".geojson", ".json", ".zip", ".gpkg"],
-                        multiple=False,
-                        button_label="Browse...",
-                    ),
-                    ui.p(
-                        "Supported: GeoJSON, Zipped Shapefile (.zip), GeoPackage (.gpkg). "
-                        "Each feature must have a 'Subzone ID' attribute matching the CSV data.",
-                        style="font-size: 0.85rem; color: #ff9800; margin-top: 0.5rem;"
-                    ),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("⚙️ Advanced Settings", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_slider(
-                        "lrf_threshold",
-                        "Locally Rare Threshold (%):",
-                        min=1, max=20, value=5, step=1, post="%"
-                    ),
-                    ui.input_select(
-                        "concentration_percentile",
-                        "Concentration Percentile:",
-                        choices={"90": "90th", "95": "95th", "99": "99th"},
-                        selected="95"
-                    ),
-                    ui.input_select(
-                        "results_display_limit",
-                        "Results Display Limit:",
-                        choices={"10": "10 rows", "20": "20 rows", "50": "50 rows", "0": "All rows"},
-                        selected="20"
-                    ),
-                ),
-                width=380
-            ),
-            ui.div(
-                ui.card(
-                    ui.card_header("📋 Data Input Instructions"),
-                    ui.div(
-                        ui.div(
-                            ui.h4("📌 How to Input Your Data", style="color: #006994; font-weight: 600;"),
-                            ui.p(
-                                "This is where you upload your gridded data for a specific Ecosystem Component (EC).",
-                                style="font-size: 1.05rem; line-height: 1.8;"
-                            ),
-                            ui.div(
-                                ui.h5("⚠️ Important Notes", style="color: #ff9800; font-weight: 600; margin-top: 1.5rem;"),
-                                ui.tags.ul(
-                                    ui.tags.li("The spreadsheet accommodates one dataset per EC"),
-                                    ui.tags.li("If multiple datasets are available, run separate assessments"),
-                                    ui.tags.li("Data organization:", 
-                                        ui.tags.ul(
-                                            ui.tags.li(ui.strong("Rows: "), "Subzones (grid cells)"),
-                                            ui.tags.li(ui.strong("Columns: "), "Features (species or habitats)")
-                                        )
-                                    ),
-                                    style="line-height: 2;"
-                                ),
-                                class_="info-box"
-                            ),
-                            ui.div(
-                                ui.h5("📝 Data Format", style="color: #28a745; font-weight: 600; margin-top: 1.5rem;"),
-                                ui.tags.ul(
-                                    ui.tags.li("Upload a CSV file with first row as feature names"),
-                                    ui.tags.li("First column should contain Subzone IDs"),
-                                    ui.tags.li("Remaining columns contain your feature data"),
-                                    style="line-height: 2;"
-                                ),
-                                style="padding: 1rem; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-radius: 8px; margin-top: 1rem;"
-                            ),
-                            ui.div(
-                                ui.h5("💡 Example Structure", style="color: #006994; font-weight: 600; margin-top: 1.5rem;"),
-                                ui.tags.pre(
-                                    """Subzone ID, Habitat1, Habitat2, Habitat3, ...
-A0, 1, 0, 1, ...
-A1, 0, 1, 0, ...
-A2, 1, 1, 0, ...""",
-                                    style="background: #2d3748; color: #68d391; padding: 1rem; border-radius: 8px; font-size: 0.9rem;"
-                                ),
-                            ),
-                            class_="markdown-content"
-                        )
-                    )
-                ),
-                ui.output_ui("validation_report_ui"),
-                ui.output_ui("data_preview_ui"),
-                ui.output_ui("geo_preview_ui")
-            )
-        )
-    ),
-
-    ui.nav_panel(
-        "⚙️ EC Features",
-        ui.layout_sidebar(
-            ui.sidebar(
-                ui.div(
-                    ui.h5("🔧 Configuration", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.p("Configure ecosystem component features and their characteristics.", style="line-height: 1.6;"),
-                    ui.input_numeric(
-                        "num_features",
-                        "Number of Features:",
-                        value=5,
-                        min=1,
-                        max=MAX_FEATURES
-                    ),
-                    ui.input_action_button(
-                        "apply_features", 
-                        "✓ Apply Configuration", 
-                        class_="btn-primary",
-                        style="width: 100%; margin-top: 1rem;"
-                    ),
-                ),
-                width=320
-            ),
-            ui.div(
-                ui.card(
-                    ui.card_header("⚙️ Feature Configuration"),
-                    ui.div(
-                        ui.output_ui("features_config_ui"),
-                        style="padding: 1rem;"
-                    )
-                ),
-                ui.card(
-                    ui.card_header("📊 Feature Summary Statistics"),
-                    ui.div(
-                        ui.output_table("features_summary_table"),
-                        style="padding: 1rem;"
-                    )
-                )
-            )
-        )
-    ),
-    
-    ui.nav_panel(
-        "📊 AQ + EV Results",
-        ui.div(
-            ui.card(
-                ui.card_header("📈 Assessment Questions and Ecological Value Results"),
-                ui.div(
-                    ui.div(
-                        ui.h4("🎯 Calculated Results", style="color: #006994; font-weight: 600;"),
-                        ui.p(
-                            "This section displays Assessment Question (AQ) scores and Ecological Value (EV) for each subzone. "
-                            "For detailed explanations of all Assessment Questions, visit the Method tab.",
-                            style="font-size: 1.05rem; line-height: 1.8;"
-                        ),
-                        class_="markdown-content"
-                    ),
-                    ui.hr(),
-                    ui.output_ui("results_ui"),
-                    style="padding: 1rem;"
-                )
-            )
-        )
-    ),
-    
-    ui.nav_panel(
-        "🏆 Total EV",
-        ui.div(
-            ui.card(
-                ui.card_header("🏆 Total Ecological Value Across All ECs"),
-                ui.div(
-                    ui.div(
-                        ui.h4("📊 Aggregated Ecological Values", style="color: #006994; font-weight: 600;"),
-                        ui.p(
-                            "This section aggregates the ecological values across all ecosystem components.",
-                            style="font-size: 1.05rem; line-height: 1.8; margin-bottom: 2rem;"
-                        ),
-                        ui.div(
-                            ui.p("💡 ", ui.strong("Total EV: "), "Sum of all EV values for each subzone", style="margin: 0.5rem 0;"),
-                            ui.p("📍 Individual EV contributions from each EC are shown below", style="margin: 0.5rem 0;"),
-                            class_="info-box"
-                        ),
-                    ),
-                    ui.output_ui("total_ev_ui"),
-                    ui.hr(),
-                    ui.div(
-                        ui.download_button(
-                            "download_results",
-                            "📊 Download Complete Analysis (Excel)",
-                            class_="btn-primary",
-                            style="font-size: 1.1rem; padding: 0.8rem 2rem;"
-                        ),
-                        ui.p(
-                            "Includes: Summary, Metadata, Original Data, AQ Results, Feature Classifications, Methodology Reference",
-                            style="margin-top: 0.5rem; color: #6c757d; font-size: 0.9rem; text-align: center;"
-                        )
-                    ),
-                    style="padding: 1rem;"
-                )
-            )
-        )
-    ),
-    
-    ui.nav_panel(
-        "📈 Visualization",
-        ui.card(
-            ui.card_header("📈 Data Visualization"),
-            ui.layout_sidebar(
-                ui.sidebar(
-                    ui.h5("🎨 Chart Options", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_select(
-                        "plot_type",
-                        "Visualization Type:",
-                        choices=["EV by Subzone", "Feature Distribution", "AQ Scores",
-                                 "AQ Breakdown by Subzone", "AQ Radar Comparison", "AQ Heatmap"]
-                    ),
-                    ui.input_select(
-                        "color_scheme",
-                        "Color Scheme:",
-                        choices=["Viridis", "Plasma", "Blues", "Greens"]
-                    ),
-                    ui.panel_conditional(
-                        "input.plot_type === 'AQ Radar Comparison'",
-                        ui.input_selectize(
-                            "radar_subzones",
-                            "Select Subzones to Compare (max 5):",
-                            choices=[],
-                            multiple=True,
-                            options={"maxItems": 5, "placeholder": "Upload data first..."}
-                        )
-                    ),
-                    width=280
-                ),
-                ui.div(
-                    ui.output_ui("visualization_ui"),
-                    style="padding: 1.5rem;"
-                )
-            )
-        )
-    ),
-
-    ui.nav_panel(
-        "🗺️ Map",
-        ui.card(
-            ui.card_header("🗺️ Spatial Map Visualization"),
-            ui.layout_sidebar(
-                ui.sidebar(
-                    ui.h5("🎛️ Map Controls", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_select(
-                        "map_variable",
-                        "Display Variable:",
-                        choices=["EV", "AQ1", "AQ2", "AQ3", "AQ4", "AQ5", "AQ6", "AQ7",
-                                 "AQ8", "AQ9", "AQ10", "AQ11", "AQ12", "AQ13", "AQ14", "AQ15"]
-                    ),
-                    ui.input_select(
-                        "map_color_scheme",
-                        "Color Scheme:",
-                        choices=["YlOrRd", "Viridis", "Blues", "RdYlGn", "Plasma"]
-                    ),
-                    ui.input_select(
-                        "map_classification",
-                        "Classification:",
-                        choices=["Continuous", "EVA 5-class (VL/L/M/H/VH)"]
-                    ),
-                    ui.input_select(
-                        "map_basemap",
-                        "Basemap:",
-                        choices=["CartoDB Positron", "OpenStreetMap", "CartoDB Dark Matter"]
-                    ),
-                    ui.input_slider(
-                        "map_opacity",
-                        "Fill Opacity:",
-                        min=0.3,
-                        max=1.0,
-                        value=0.7,
-                        step=0.1
-                    ),
-                    width=280
-                ),
-                ui.div(
-                    ui.output_ui("map_output"),
-                    style="min-height: 600px;"
-                )
-            )
-        )
-    ),
-
-    ui.nav_panel(
-        "📋 Physical Accounts",
-        ui.layout_sidebar(
-            ui.sidebar(
-                ui.div(
-                    ui.h5("🏛️ Study Area", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_text("pa_eaa_name", "EAA Name:", placeholder="e.g. Lithuanian Coast MPA"),
-                    ui.input_text("pa_boundary_desc", "Boundary Description:", placeholder="Describe the study area boundary"),
-                    ui.input_numeric("pa_accounting_year", "Accounting Year:", value=2024, min=1990, max=2100),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("🌿 EUNIS Habitats", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_selectize(
-                        "pa_habitat_select",
-                        "Select Habitat Types:",
-                        choices={h["code"]: f"{h['code']} - {h['name']}" for h in pa_config.EUNIS_HABITATS},
-                        multiple=True,
-                        options={"placeholder": "Search and select habitats..."}
-                    ),
-                    ui.input_text("pa_custom_habitat_code", "Custom Code:", placeholder="e.g. MB999"),
-                    ui.input_text("pa_custom_habitat_name", "Custom Name:", placeholder="e.g. Local reef habitat"),
-                    ui.input_action_button("pa_add_custom_habitat", "Add Custom Habitat", class_="btn-outline-secondary btn-sm", style="margin-top: 0.5rem;"),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("📊 Benefits", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_checkbox_group(
-                        "pa_benefits_select",
-                        "Active Benefits:",
-                        choices={b["name"]: f"{b['name']} ({b['unit']})" for b in pa_config.DEFAULT_BENEFITS},
-                        selected=[b["name"] for b in pa_config.DEFAULT_BENEFITS],
-                    ),
-                    ui.input_text("pa_custom_benefit_name", "Custom Benefit Name:", placeholder="e.g. Aquaculture"),
-                    ui.input_text("pa_custom_benefit_unit", "Unit:", placeholder="e.g. tonnes"),
-                    ui.input_action_button("pa_add_custom_benefit", "Add Custom Benefit", class_="btn-outline-secondary btn-sm", style="margin-top: 0.5rem;"),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("⚙️ Settings", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_select("pa_area_unit", "Area Unit:", choices={"Ha": "Hectares (Ha)", "km2": "Square kilometres (km²)"}, selected="Ha"),
-                    ui.download_button("pa_download_standalone", "📊 Download PA Report (Excel)", class_="btn-primary", style="width: 100%; margin-top: 1rem;"),
-                    ui.download_button("pa_download_combined", "📊 Download Combined EVA+PA (Excel)", class_="btn-secondary", style="width: 100%; margin-top: 0.5rem;"),
-                ),
-                width=380
-            ),
-            ui.div(
-                ui.card(
-                    ui.card_header("🗺️ Habitat Assignment"),
-                    ui.div(ui.output_ui("pa_habitat_assignment_ui"), style="padding: 1rem;")
-                ),
-                ui.card(
-                    ui.card_header("📐 Ecosystem Extent Account"),
-                    ui.div(ui.output_ui("pa_extent_ui"), style="padding: 1rem;")
-                ),
-                ui.card(
-                    ui.card_header("📊 Supply Table"),
-                    ui.div(ui.output_ui("pa_supply_ui"), style="padding: 1rem;")
-                ),
-            )
-        )
-    ),
-
-    ui.nav_panel(
-        "📖 Help & Method",
-        ui.div(
-            ui.div(
-                ui.h2("📖 Help & Methodology Reference", style="color: #006994; font-weight: 700; margin-bottom: 1.5rem;"),
-                ui.p(
-                    "Comprehensive guide, user manual, and methodology reference for the MARBEFES EVA application.",
-                    style="font-size: 1.1rem; color: #6c757d; margin-bottom: 2rem;"
-                )
-            ),
-
-            # Version and User Manual card
-            ui.card(
-                ui.card_header("📚 User Manual & Version Info"),
-                ui.div(
-                    ui.layout_column_wrap(
-                        ui.div(
-                            ui.h4("📖 User Manual", style="color: #006994; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Complete guide covering all features of the application:", style="margin-bottom: 0.5rem;"),
-                            ui.tags.ul(
-                                ui.tags.li("Data Input and CSV format requirements"),
-                                ui.tags.li("EC Features configuration and classification guide"),
-                                ui.tags.li("Understanding AQ scores and EV calculation"),
-                                ui.tags.li("Physical Accounts (SEEA EA) — extent and supply tables"),
-                                ui.tags.li("Visualization and Map features"),
-                                ui.tags.li("Excel export formats and contents"),
-                                ui.tags.li("Troubleshooting common issues"),
-                                ui.tags.li("Complete glossary of terms"),
-                                style="line-height: 2; color: #495057;"
-                            ),
-                            ui.p(
-                                "The full user manual is available at: ",
-                                ui.code("docs/USER_MANUAL.md"),
-                                style="margin-top: 1rem; color: #6c757d; font-size: 0.95rem;"
-                            ),
-                            style="padding: 1rem;"
-                        ),
-                        ui.div(
-                            ui.h4("⚙️ Version Information", style="color: #006994; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p(f"Application Version: ", ui.strong(f"v{APP_VERSION_STR}"), style="margin: 0.3rem 0;"),
-                            ui.p(f"EVA Module: v{get_version_info()['eva_module']}", style="margin: 0.3rem 0; color: #6c757d;"),
-                            ui.p(f"PA Module: v{get_version_info()['pa_module']}", style="margin: 0.3rem 0; color: #6c757d;"),
-                            ui.p(f"Build Date: {get_version_info()['build_date']}", style="margin: 0.3rem 0; color: #6c757d;"),
-                            ui.hr(),
-                            ui.h5("📋 Recent Changes", style="color: #006994; font-weight: 600; margin-top: 1rem;"),
-                            ui.tags.ul(
-                                ui.tags.li("Physical Accounts module (SEEA EA)"),
-                                ui.tags.li("Critical bug fixes in AQ mapping"),
-                                ui.tags.li("XSS security fix"),
-                                ui.tags.li("Vectorized EV calculation"),
-                                ui.tags.li("Centralized version management"),
-                                style="line-height: 1.8; color: #495057; font-size: 0.9rem;"
-                            ),
-                            ui.p(
-                                "Full changelog: ",
-                                ui.code("CHANGELOG.md"),
-                                style="margin-top: 0.5rem; color: #6c757d; font-size: 0.9rem;"
-                            ),
-                            style="padding: 1rem; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 8px;"
-                        ),
-                        width=1/2
-                    ),
-                    style="padding: 1rem;"
-                )
-            ),
-
-            # Acronyms Table
-            ui.card(
-                ui.card_header("🔤 EVA Terminology Reference"),
-                ui.div(
-                    ui.output_table("acronyms_table"),
-                    style="padding: 1rem;"
-                )
-            ),
-
-            # Assessment Questions Guide
-            ui.card(
-                ui.card_header("ℹ️ Assessment Questions (AQ) Guide"),
-                ui.div(
-                    ui.p(
-                        "Detailed explanations of all 15 Assessment Questions used in the EVA methodology.",
-                        style="margin-bottom: 1.5rem; font-size: 1.05rem; color: #495057;"
-                    ),
-                    ui.output_ui("aq_guide_content"),
-                    style="padding: 1rem;"
-                )
-            )
-        )
-    ),
-
-    title=ui.div(
-        ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 35px; margin-right: 10px;">'),
-        ui.span(f"MARBEFES EVA v{APP_VERSION_STR}", style="font-weight: 700;"),
-        style="display: flex; align-items: center;",
-        class_="logo-container"
-    ),
-    id="navbar",
-    header=ui.tags.head(
-        ui.HTML(custom_css)
-    )
-)
-
-
-# Server logic
 def server(input, output, session):
 
     # Reactive values for storing data
@@ -1074,6 +57,13 @@ def server(input, output, session):
     geo_data_full = reactive.Value(None)  # Full GeoDataFrame with all attributes (for PA module)
     validation_report = reactive.Value(None)
 
+    # Grid Setup reactive values
+    boundary_polygon = reactive.Value(None)   # GeoDataFrame with boundary polygon
+    generated_grid = reactive.Value(None)     # GeoDataFrame with generated hex grid
+
+    # DwC-A state
+    dwca_info = reactive.Value(None)   # DwC-A summary dict or None if CSV
+
     # Multi-EC support
     ec_store = reactive.Value({})      # {ec_name: {data, data_type, classifications, results, feature_count}}
     current_ec = reactive.Value(None)  # Name of the active EC
@@ -1090,147 +80,6 @@ def server(input, output, session):
     def aq_guide_content():
         return ui.HTML(get_aq_guide_html())
 
-    def get_aq_guide_html():
-        """Generate comprehensive AQ guide HTML"""
-        return """
-        <div style="line-height: 1.8;">
-            <h4 style="color: #006994; margin-top: 1.5rem; margin-bottom: 1rem;">🔍 Rarity-Based Assessment Questions</h4>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #2196F3;">
-                <h5 style="color: #2196F3; margin-top: 0;"><strong>AQ1</strong> - Locally Rare Features (LRF) - Qualitative</h5>
-                <p><strong>Purpose:</strong> Identifies features that are rare at the local scale.</p>
-                <p><strong>Applies to:</strong> Qualitative (presence/absence) data only</p>
-                <p><strong>Calculation:</strong> Average of rescaled values for features present in ≤5% of subzones</p>
-                <p><strong>Returns NaN when:</strong> No features are locally rare (all occur in >5% of subzones)</p>
-                <p><strong>Higher values indicate:</strong> More locally rare features present in the subzone</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #2196F3;">
-                <h5 style="color: #2196F3; margin-top: 0;"><strong>AQ2</strong> - Locally Rare Features (LRF) - Quantitative</h5>
-                <p><strong>Purpose:</strong> Measures abundance of locally rare features.</p>
-                <p><strong>Applies to:</strong> Quantitative (count/measurement) data only</p>
-                <p><strong>Calculation:</strong> Average abundance of locally rare features</p>
-                <p><strong>Returns NaN when:</strong> Qualitative data or when no LRF exist</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #ff9800;">
-                <h5 style="color: #ff9800; margin-top: 0;"><strong>AQ3</strong> - Regionally Rare Features (RRF) - Qualitative</h5>
-                <p><strong>Purpose:</strong> Identifies features defined as regionally rare.</p>
-                <p><strong>Applies to:</strong> Qualitative data with RRF-classified features</p>
-                <p><strong>Calculation:</strong> Average of rescaled values for RRF-classified features</p>
-                <p><strong>Returns NaN when:</strong> No features classified as RRF</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #ff9800;">
-                <h5 style="color: #ff9800; margin-top: 0;"><strong>AQ4</strong> - Regionally Rare Features (RRF) - Quantitative</h5>
-                <p><strong>Purpose:</strong> Measures abundance of regionally rare features.</p>
-                <p><strong>Applies to:</strong> Quantitative data with RRF-classified features</p>
-                <p><strong>Returns NaN when:</strong> Qualitative data or no RRF</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #d32f2f;">
-                <h5 style="color: #d32f2f; margin-top: 0;"><strong>AQ5</strong> - Nationally Rare Features (NRF) - Qualitative</h5>
-                <p><strong>Purpose:</strong> Highest rarity classification - nationally rare features.</p>
-                <p><strong>Applies to:</strong> Qualitative data with NRF features</p>
-                <p><strong>Returns NaN when:</strong> No features classified as NRF</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #d32f2f;">
-                <h5 style="color: #d32f2f; margin-top: 0;"><strong>AQ6</strong> - Nationally Rare Features (NRF) - Quantitative</h5>
-                <p><strong>Purpose:</strong> Abundance of nationally rare features.</p>
-                <p><strong>Applies to:</strong> Quantitative data with NRF features</p>
-                <p><strong>Returns NaN when:</strong> Qualitative data or no NRF</p>
-            </div>
-
-            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">⭐ General Assessment</h4>
-
-            <div style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #ff9800;">
-                <h5 style="color: #ff9800; margin-top: 0;"><strong>AQ7</strong> - All Features - Qualitative ⭐</h5>
-                <p><strong>Purpose:</strong> Uses ALL features without any classification filter.</p>
-                <p><strong>Applies to:</strong> Qualitative data</p>
-                <p><strong>Special:</strong> ALWAYS ACTIVE for qualitative data - does not require rare features</p>
-                <p><strong>Calculation:</strong> Average of rescaled values for ALL features</p>
-                <p><strong>Why important:</strong> Provides baseline assessment when no features meet special criteria</p>
-            </div>
-
-            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">📍 Occurrence-Based Assessment Questions</h4>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #28a745;">
-                <h5 style="color: #28a745; margin-top: 0;"><strong>AQ8</strong> - Regularly Occurring Features (ROF) - Quantitative</h5>
-                <p><strong>Purpose:</strong> Assesses features that occur regularly (>5% of subzones).</p>
-                <p><strong>Applies to:</strong> Quantitative data only</p>
-                <p><strong>Calculation:</strong> Average abundance of regularly occurring features</p>
-                <p><strong>Returns NaN when:</strong> Qualitative data</p>
-            </div>
-
-            <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #28a745;">
-                <h5 style="color: #28a745; margin-top: 0;"><strong>AQ9</strong> - ROF Concentration-Weighted - Quantitative 🔬</h5>
-                <p><strong>Purpose:</strong> Most complex calculation - identifies spatial hotspots of regularly occurring features.</p>
-                <p><strong>Applies to:</strong> Quantitative data only</p>
-                <p><strong>Special 3-step calculation:</strong></p>
-                <ol style="margin-left: 1.5rem;">
-                    <li><strong>Step 1:</strong> Normalize by mean: <code>value / feature_mean</code></li>
-                    <li><strong>Step 2:</strong> Weight by concentration: <code>(% in top 5% / occurrence count) × normalized_value</code></li>
-                    <li><strong>Step 3:</strong> Rescale to 0-5: <code>5 × weighted / MAX(all_weighted)</code></li>
-                </ol>
-                <p><strong>Returns NaN when:</strong> Qualitative data</p>
-                <p><strong>Higher values indicate:</strong> Subzones with concentrated abundances of regularly occurring features</p>
-            </div>
-
-            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">🌿 Ecological Significance Assessment Questions</h4>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #00b8d4;">
-                <h5 style="color: #00b8d4; margin-top: 0;"><strong>AQ10</strong> - Ecologically Significant Features (ESF) - Qualitative</h5>
-                <p><strong>Purpose:</strong> Identifies keystone species and ecosystem engineers.</p>
-                <p><strong>Examples:</strong> Keystone predators, ecosystem engineers</p>
-                <p><strong>Returns NaN when:</strong> No features classified as ESF</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #00b8d4;">
-                <h5 style="color: #00b8d4; margin-top: 0;"><strong>AQ11</strong> - Ecologically Significant Features (ESF) - Quantitative</h5>
-                <p><strong>Purpose:</strong> Abundance of ecologically important features.</p>
-                <p><strong>Returns NaN when:</strong> Qualitative data or no ESF</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #9c27b0;">
-                <h5 style="color: #9c27b0; margin-top: 0;"><strong>AQ12</strong> - Habitat Forming Species/Biogenic Habitat (HFS/BH) - Qualitative</h5>
-                <p><strong>Purpose:</strong> Features creating habitat structure.</p>
-                <p><strong>Examples:</strong> Corals, seagrasses, oyster reefs, kelp forests, sponge grounds</p>
-                <p><strong>Returns NaN when:</strong> No features classified as HFS/BH</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #9c27b0;">
-                <h5 style="color: #9c27b0; margin-top: 0;"><strong>AQ13</strong> - Habitat Forming Species/Biogenic Habitat (HFS/BH) - Quantitative</h5>
-                <p><strong>Purpose:</strong> Extent of habitat-forming features.</p>
-                <p><strong>Returns NaN when:</strong> Qualitative data or no HFS/BH</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #673ab7;">
-                <h5 style="color: #673ab7; margin-top: 0;"><strong>AQ14</strong> - Symbiotic Species (SS) - Qualitative</h5>
-                <p><strong>Purpose:</strong> Species in symbiotic relationships.</p>
-                <p><strong>Examples:</strong> Mutualistic, commensalistic, or parasitic relationships</p>
-                <p><strong>Returns NaN when:</strong> No features classified as SS</p>
-            </div>
-
-            <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; border-left: 4px solid #673ab7;">
-                <h5 style="color: #673ab7; margin-top: 0;"><strong>AQ15</strong> - Symbiotic Species (SS) - Quantitative</h5>
-                <p><strong>Purpose:</strong> Abundance of symbiotic species.</p>
-                <p><strong>Returns NaN when:</strong> Qualitative data or no SS</p>
-            </div>
-
-            <h4 style="color: #006994; margin-top: 2rem; margin-bottom: 1rem;">📊 EV (Ecological Value) Calculation</h4>
-
-            <div style="background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 1.5rem; border-radius: 8px; border-left: 4px solid #2196F3;">
-                <p style="font-size: 1.1rem; margin-bottom: 1rem;"><strong>EV = MAX of applicable AQs (not average or sum!)</strong></p>
-                <p><strong>For Qualitative data:</strong></p>
-                <p style="margin-left: 1.5rem;"><code>EV = MAX(AQ1, AQ3, AQ5, AQ7, AQ10, AQ12, AQ14)</code></p>
-                <p style="margin-top: 1rem;"><strong>For Quantitative data:</strong></p>
-                <p style="margin-left: 1.5rem;"><code>EV = MAX(AQ2, AQ4, AQ6, AQ8, AQ9, AQ11, AQ13, AQ15)</code></p>
-                <p style="margin-top: 1rem; font-style: italic;">⚠️ <strong>Important:</strong> EV takes the MAXIMUM value to ensure that any significant ecological value is captured, even if only one criterion is met.</p>
-            </div>
-        </div>
-        """
-
     # Download CSV template
     @render.download(filename="data_template.csv")
     def download_template():
@@ -1245,6 +94,39 @@ def server(input, output, session):
         df = pd.DataFrame(template_data)
         return io.StringIO(df.to_csv(index=False))
     
+    # DwC-A options UI (shown only when a DwC-A file is detected)
+    @output
+    @render.ui
+    def dwca_options_ui():
+        info = dwca_info.get()
+        if info is None:
+            return ui.TagList()
+        return ui.div(
+            ui.hr(style="margin: 0.8rem 0;"),
+            ui.h6("🦠 Darwin Core Archive Detected", style="color: #006994; font-weight: 600;"),
+            ui.p(
+                f"{info['event_count']} events, "
+                f"{info['species_count']} species, "
+                f"{info['occurrence_count']} occurrences",
+                style="font-size: 0.85rem; color: #6c757d; margin-bottom: 0.5rem;"
+            ),
+            ui.input_select(
+                "dwca_value_mode",
+                "Value mode:",
+                choices={
+                    "abundance": "Abundance (individualCount)" if info["has_abundance"] else "Abundance (not available — defaults to 1)",
+                    "presence": "Presence / Absence (0/1)",
+                },
+                selected="abundance" if info["has_abundance"] else "presence",
+            ),
+            ui.input_action_button(
+                "dwca_load",
+                "📥 Load DwC-A Data",
+                class_="btn-primary btn-sm",
+                style="width: 100%; margin-top: 0.5rem;"
+            ),
+        )
+
     # Handle file upload
     @reactive.Effect
     @reactive.event(input.upload_data)
@@ -1255,6 +137,7 @@ def server(input, output, session):
 
             # Reset stale validation report from previous upload
             validation_report.set(None)
+            dwca_info.set(None)
 
             # Validate file size
             try:
@@ -1262,7 +145,6 @@ def server(input, output, session):
                 file_size_mb = file_size_bytes / (1024 * 1024)
 
                 if file_size_mb > MAX_FILE_SIZE_MB:
-                    # File is too large, reset uploaded_data and return
                     uploaded_data.set(None)
                     ui.notification_show(f"File too large ({file_size_mb:.1f} MB). Maximum is {MAX_FILE_SIZE_MB} MB.", type="error", duration=8)
                     return
@@ -1270,6 +152,35 @@ def server(input, output, session):
                 logger.error(f"Could not check file size: {e}")
                 ui.notification_show(f"Could not process uploaded file: {e}", type="error", duration=8)
                 return
+
+            # Check if this is a DwC-A zip
+            if file_path.endswith(".zip") or (
+                file_info[0].get("type", "") == "application/zip"
+            ):
+                if dwca_reader.is_dwca_zip(file_path):
+                    try:
+                        summary = dwca_reader.get_dwca_summary(file_path)
+                        summary["_file_path"] = file_path
+                        summary["_file_size_mb"] = round(file_size_mb, 2)
+                        dwca_info.set(summary)
+                        ui.notification_show(
+                            f"DwC-A detected: {summary['event_count']} events, "
+                            f"{summary['species_count']} species. "
+                            "Select value mode and click 'Load DwC-A Data'.",
+                            type="message", duration=6,
+                        )
+                    except Exception as e:
+                        logger.error(f"Could not parse DwC-A: {e}")
+                        ui.notification_show(f"Could not parse Darwin Core Archive: {e}", type="error", duration=8)
+                    return
+                else:
+                    uploaded_data.set(None)
+                    ui.notification_show(
+                        "This zip file is not a Darwin Core Archive (no meta.xml found). "
+                        "For data upload, use a CSV file or a DwC-A zip.",
+                        type="error", duration=8,
+                    )
+                    return
 
             # Read CSV and handle missing data
             try:
@@ -1279,53 +190,114 @@ def server(input, output, session):
                 ui.notification_show(f"Could not read CSV file: {e}", type="error", duration=8)
                 return
 
-            # Clean up the data:
-            # 1. Replace any string variations of NA/missing with NaN
-            df = df.replace(['NA', 'N/A', 'na', 'n/a', 'null', 'NULL', 'None', ''], np.nan)
+            _ingest_dataframe(df, file_size_mb)
 
-            # 2. Ensure Subzone ID column exists and is clean
-            if 'Subzone ID' not in df.columns:
-                possible_id_cols = [col for col in df.columns if 'id' in col.lower() or 'subzone' in col.lower()]
-                if possible_id_cols:
-                    df = df.rename(columns={possible_id_cols[0]: 'Subzone ID'})
-                else:
-                    df['Subzone ID'] = [f"S{i+1}" for i in range(len(df))]
+    @reactive.Effect
+    @reactive.event(input.dwca_load)
+    def handle_dwca_load():
+        """Load and pivot DwC-A data when user clicks the load button."""
+        info = dwca_info.get()
+        if info is None:
+            return
+        file_path = info.get("_file_path")
+        if not file_path or not os.path.exists(file_path):
+            ui.notification_show("Upload file is no longer available. Please re-upload.", type="error", duration=6)
+            return
+        try:
+            value_mode = input.dwca_value_mode()
+        except Exception:
+            value_mode = "abundance"
+        try:
+            df = dwca_reader.read_dwca(file_path, value_column=value_mode)
+        except Exception as e:
+            logger.error(f"Could not load DwC-A data: {e}")
+            ui.notification_show(f"Failed to load DwC-A data: {e}", type="error", duration=8)
+            return
 
-            df = df.dropna(subset=['Subzone ID'])
-            df['Subzone ID'] = df['Subzone ID'].astype(str).str.strip()
-            original_dup_count = int(df.duplicated(subset=['Subzone ID']).sum())
-            df = df.drop_duplicates(subset=['Subzone ID'])
+        _ingest_dataframe(df, info.get("_file_size_mb", 0), source="dwca")
 
-            # 3. Convert feature columns to numeric, but preserve NaN
-            feature_cols = [col for col in df.columns if col != 'Subzone ID']
-            for col in feature_cols:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+        # Auto-extract spatial data from DwC-A event coordinates
+        geo_msg = ""
+        if info.get("has_coordinates"):
+            try:
+                gdf = dwca_reader.extract_geodataframe(file_path)
+                if gdf is not None and not gdf.empty:
+                    original_crs.set("EPSG:4326 (WGS84)")
+                    # Compute match info
+                    csv_ids = set(df['Subzone ID'].astype(str).str.strip())
+                    geo_ids = set(gdf['Subzone ID'])
+                    matched = csv_ids & geo_ids
+                    geo_match_info.set({
+                        'total_features': len(gdf),
+                        'matched': len(matched),
+                        'csv_only': len(csv_ids - geo_ids),
+                        'geo_only': len(geo_ids - csv_ids),
+                        'csv_only_ids': sorted(list(csv_ids - geo_ids))[:20],
+                        'geo_only_ids': sorted(list(geo_ids - csv_ids))[:20],
+                    })
+                    geo_data_full.set(gdf.copy())
+                    geo_data.set(gdf[['Subzone ID', 'geometry']])
+                    geo_msg = f" + {len(gdf)} point locations mapped"
+            except Exception as e:
+                logger.warning(f"Could not extract DwC-A coordinates: {e}")
 
-            # 4. Sort by Subzone ID for consistent ordering
-            df = df.sort_values('Subzone ID').reset_index(drop=True)
+        ui.notification_show(
+            f"DwC-A loaded: {len(df)} subzones x "
+            f"{len([c for c in df.columns if c != 'Subzone ID'])} species "
+            f"({value_mode} mode){geo_msg}",
+            type="message", duration=5,
+        )
 
-            uploaded_data.set(df)
+    def _ingest_dataframe(df: pd.DataFrame, file_size_mb: float, source: str = "csv"):
+        """Common pipeline for cleaning and ingesting a DataFrame (CSV or DwC-A)."""
+        # Clean up the data:
+        # 1. Replace any string variations of NA/missing with NaN
+        df = df.replace(['NA', 'N/A', 'na', 'n/a', 'null', 'NULL', 'None', ''], np.nan)
 
-            # Build validation report
-            feature_cols = [col for col in df.columns if col != 'Subzone ID']
-            report = {
-                'rows': len(df),
-                'columns': len(feature_cols),
-                'features': feature_cols,
-                'missing': {col: int(df[col].isna().sum()) for col in feature_cols},
-                'missing_pct': {col: round(df[col].isna().sum() / len(df) * 100, 1) for col in feature_cols},
-                'non_numeric': [col for col in feature_cols if not pd.api.types.is_numeric_dtype(df[col])],
-                'duplicate_ids': original_dup_count,
-                'file_size_mb': round(file_size_mb, 2),
-            }
-            validation_report.set(report)
+        # 2. Ensure Subzone ID column exists and is clean
+        if 'Subzone ID' not in df.columns:
+            possible_id_cols = [col for col in df.columns if 'id' in col.lower() or 'subzone' in col.lower()]
+            if possible_id_cols:
+                df = df.rename(columns={possible_id_cols[0]: 'Subzone ID'})
+            else:
+                df['Subzone ID'] = [f"S{i+1}" for i in range(len(df))]
 
-            # Automatically detect data type
-            auto_detected_type = eva_calculations.detect_data_type(df)
-            detected_data_type.set(auto_detected_type)
+        df = df.dropna(subset=['Subzone ID'])
+        df['Subzone ID'] = df['Subzone ID'].astype(str).str.strip()
+        original_dup_count = int(df.duplicated(subset=['Subzone ID']).sum())
+        df = df.drop_duplicates(subset=['Subzone ID'])
 
-            # Update the input selector to the detected type
-            ui.update_select("data_type", selected=auto_detected_type)
+        # 3. Convert feature columns to numeric, but preserve NaN
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+        for col in feature_cols:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # 4. Sort by Subzone ID for consistent ordering
+        df = df.sort_values('Subzone ID').reset_index(drop=True)
+
+        uploaded_data.set(df)
+
+        # Build validation report
+        feature_cols = [col for col in df.columns if col != 'Subzone ID']
+        report = {
+            'rows': len(df),
+            'columns': len(feature_cols),
+            'features': feature_cols,
+            'missing': {col: int(df[col].isna().sum()) for col in feature_cols},
+            'missing_pct': {col: round(df[col].isna().sum() / len(df) * 100, 1) for col in feature_cols},
+            'non_numeric': [col for col in feature_cols if not pd.api.types.is_numeric_dtype(df[col])],
+            'duplicate_ids': original_dup_count,
+            'file_size_mb': round(file_size_mb, 2),
+            'source': source,
+        }
+        validation_report.set(report)
+
+        # Automatically detect data type
+        auto_detected_type = eva_calculations.detect_data_type(df)
+        detected_data_type.set(auto_detected_type)
+
+        # Update the input selector to the detected type
+        ui.update_select("data_type", selected=auto_detected_type)
 
     # Validation report UI
     @output
@@ -1375,6 +347,209 @@ def server(input, output, session):
         return ui.card(
             ui.card_header("📋 Data Validation Report"),
             ui.div(*items, style="padding: 1rem;")
+        )
+
+    # --- Grid Setup handlers ---
+
+    @reactive.Effect
+    @reactive.event(input.upload_boundary)
+    def handle_boundary_upload():
+        file_info = input.upload_boundary()
+        if file_info is None or len(file_info) == 0:
+            return
+        file_path = file_info[0]["datapath"]
+        file_name = file_info[0]["name"].lower()
+        try:
+            if file_name.endswith('.zip'):
+                gdf = gpd.read_file(f"zip://{file_path}")
+            else:
+                gdf = gpd.read_file(file_path)
+        except Exception as e:
+            ui.notification_show(f"Could not read boundary file: {e}", type="error", duration=8)
+            return
+        # Reproject to WGS84
+        if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
+            gdf = gdf.to_crs(epsg=4326)
+        elif gdf.crs is None:
+            gdf = gdf.set_crs(epsg=4326)
+        boundary_polygon.set(gdf)
+        generated_grid.set(None)
+        ui.notification_show(f"Boundary loaded: {len(gdf)} polygon(s)", type="message", duration=4)
+
+    @output
+    @render.ui
+    def draw_map_output():
+        import folium
+        import folium.plugins
+        m = folium.Map(location=[55.7, 21.1], zoom_start=10, tiles="OpenStreetMap")
+        draw = folium.plugins.Draw(
+            draw_options={
+                "polyline": False,
+                "rectangle": True,
+                "polygon": True,
+                "circle": False,
+                "marker": False,
+                "circlemarker": False,
+            },
+            edit_options={"edit": True, "remove": True},
+        )
+        draw.add_to(m)
+        # JavaScript to capture drawn shapes and send to Shiny
+        js = """
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var checkMap = setInterval(function() {
+                var mapEl = document.querySelector('.folium-map');
+                if (mapEl && mapEl._leaflet_map) {
+                    var map = mapEl._leaflet_map;
+                    var drawnItems = new L.FeatureGroup();
+                    map.eachLayer(function(layer) {
+                        if (layer instanceof L.FeatureGroup) {
+                            drawnItems = layer;
+                        }
+                    });
+                    map.on('draw:created', function(e) {
+                        var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                        Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                    });
+                    map.on('draw:edited', function(e) {
+                        var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                        Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                    });
+                    clearInterval(checkMap);
+                }
+            }, 500);
+        });
+        </script>
+        """
+        map_html = m._repr_html_()
+        return ui.HTML(f'<div style="height: 400px;">{map_html}</div>{js}')
+
+    @reactive.Effect
+    @reactive.event(input.drawn_polygon)
+    def handle_drawn_polygon():
+        geojson_str = input.drawn_polygon()
+        if not geojson_str:
+            return
+        try:
+            gdf = eva_hexgrid.parse_drawn_polygon(geojson_str)
+            if len(gdf) == 0:
+                return
+            boundary_polygon.set(gdf)
+            generated_grid.set(None)
+            ui.notification_show("Polygon captured from map", type="message", duration=3)
+        except ValueError as e:
+            ui.notification_show(f"Invalid polygon: {e}", type="error", duration=6)
+
+    @reactive.Effect
+    @reactive.event(input.generate_grid)
+    def handle_generate_grid():
+        boundary = boundary_polygon.get()
+        if boundary is None:
+            ui.notification_show("Please define a study area first.", type="warning", duration=4)
+            return
+        preset_key = input.hex_preset()
+        resolution = HEX_PRESETS[preset_key]["resolution"]
+        try:
+            grid = eva_hexgrid.generate_h3_grid(boundary, resolution)
+        except ValueError as e:
+            ui.notification_show(str(e), type="error", duration=6)
+            return
+        if len(grid) > 5000:
+            ui.notification_show(
+                f"Warning: {len(grid)} cells generated. This may be slow. "
+                "Consider using a coarser resolution.",
+                type="warning", duration=8,
+            )
+        generated_grid.set(grid)
+        ui.notification_show(f"Grid generated: {len(grid)} hexagonal cells", type="message", duration=4)
+
+    @output
+    @render.ui
+    def grid_status_output():
+        grid = generated_grid.get()
+        boundary = boundary_polygon.get()
+        parts = []
+        if boundary is not None:
+            parts.append(f"Boundary: {len(boundary)} polygon(s)")
+        if grid is not None:
+            preset_key = input.hex_preset()
+            area_per_cell = {9: 0.105, 8: 0.737, 7: 5.161}
+            res = HEX_PRESETS[preset_key]["resolution"]
+            total_area_km2 = len(grid) * area_per_cell.get(res, 0.737)
+            parts.append(f"Grid: {len(grid)} cells, ~{total_area_km2:.1f} km²")
+        if not parts:
+            return ui.p("Upload a boundary file or draw a polygon on the map to get started.",
+                        style="color: #6c757d; font-style: italic;")
+        return ui.div(
+            *[ui.p(p, style="margin: 0.3rem 0; font-weight: 500;") for p in parts],
+            style="padding: 0.5rem; background: #e8f5e9; border-radius: 6px; margin-bottom: 1rem;",
+        )
+
+    @output
+    @render.ui
+    def grid_preview_map_output():
+        grid = generated_grid.get()
+        boundary = boundary_polygon.get()
+        if grid is None and boundary is None:
+            return ui.HTML("")
+        import folium
+        # Determine map center from boundary or grid
+        gdf_for_bounds = grid if grid is not None else boundary
+        bounds = gdf_for_bounds.total_bounds
+        center_lat = (bounds[1] + bounds[3]) / 2
+        center_lng = (bounds[0] + bounds[2]) / 2
+        from eva_map import auto_zoom_level
+        zoom = auto_zoom_level(bounds)
+        m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles="OpenStreetMap")
+        # Show boundary
+        if boundary is not None:
+            folium.GeoJson(
+                boundary.__geo_interface__,
+                style_function=lambda x: {
+                    "fillColor": "transparent",
+                    "color": "#ff6600",
+                    "weight": 3,
+                    "dashArray": "5 5",
+                },
+                name="Boundary",
+            ).add_to(m)
+        # Show hex grid
+        if grid is not None:
+            folium.GeoJson(
+                grid.__geo_interface__,
+                style_function=lambda x: {
+                    "fillColor": "#4da6ff",
+                    "color": "#006994",
+                    "weight": 1,
+                    "fillOpacity": 0.3,
+                },
+                tooltip=folium.GeoJsonTooltip(fields=["Subzone ID"]),
+                name="Hex Grid",
+            ).add_to(m)
+        folium.LayerControl().add_to(m)
+        return ui.HTML(f'<div style="height: 600px;">{m._repr_html_()}</div>')
+
+    @render.download(filename="hex_grid.geojson")
+    def download_grid():
+        grid = generated_grid.get()
+        if grid is None:
+            return
+        yield grid.to_json()
+
+    @reactive.Effect
+    @reactive.event(input.use_grid)
+    def handle_use_grid():
+        grid = generated_grid.get()
+        if grid is None:
+            ui.notification_show("Generate a grid first.", type="warning", duration=4)
+            return
+        geo_data.set(grid[["Subzone ID", "geometry"]])
+        geo_data_full.set(grid.copy())
+        original_crs.set("EPSG:4326 (WGS84)")
+        ui.notification_show(
+            f"Grid with {len(grid)} cells loaded into pipeline. Proceed to Data Input.",
+            type="message", duration=5,
         )
 
     # Handle spatial file upload (GeoJSON, Shapefile ZIP, GeoPackage)
@@ -1767,11 +942,11 @@ def server(input, output, session):
         for feature in feature_names:
             try:
                 rarity = list(input[f"class_rarity_{feature}"]() or [])
-            except Exception:
+            except (KeyError, TypeError):
                 rarity = []
             try:
                 role = list(input[f"class_role_{feature}"]() or [])
-            except Exception:
+            except (KeyError, TypeError):
                 role = []
             combined = rarity + role
             if combined:
@@ -1791,39 +966,47 @@ def server(input, output, session):
         df = uploaded_data.get()
         if df is not None:
             feature_names = df.columns[1:].tolist()
-            
-            # Calculate X, Y, Z metrics for each feature
-            summaries = []
-            for col in feature_names:
-                values = df[col].dropna()
-                if not pd.api.types.is_numeric_dtype(values) or values.empty:
-                    summaries.append({
-                        "Feature Name": col, "X (Mean)": "N/A", "Y (95th Pct %)": "N/A", 
-                        "Z (Occurrence)": "N/A", "Count": "N/A", "Average": "N/A"
-                    })
-                    continue
+            feature_df = df[feature_names]
 
-                mean_val = values.mean()
-                
-                # 95th percentile of positive values
-                positive_values = values[values > 0]
+            # Identify numeric columns for vectorized ops
+            numeric_mask = feature_df.apply(lambda c: pd.api.types.is_numeric_dtype(c.dropna()))
+            numeric_cols = [c for c in feature_names if numeric_mask[c] and feature_df[c].dropna().shape[0] > 0]
+            non_numeric_cols = [c for c in feature_names if c not in numeric_cols]
+
+            # Vectorized stats for all numeric columns at once
+            num_df = feature_df[numeric_cols]
+            means = num_df.mean()
+            sums = num_df.sum()
+            occurrences = (num_df > 0).sum()
+
+            # Y metric still needs per-column percentile logic
+            y_metrics = {}
+            for col in numeric_cols:
+                positive_values = num_df[col].dropna()
+                positive_values = positive_values[positive_values > 0]
                 if not positive_values.empty:
                     percentile_95 = np.percentile(positive_values, 95)
-                    sum_top_5_percent = values[values >= percentile_95].sum()
-                    total_sum = values.sum()
-                    y_metric = (sum_top_5_percent / total_sum * 100) if total_sum > 0 else 0
+                    sum_top_5_percent = num_df[col][num_df[col] >= percentile_95].sum()
+                    total_sum = sums[col]
+                    y_metrics[col] = (sum_top_5_percent / total_sum * 100) if total_sum > 0 else 0
                 else:
-                    y_metric = 0
+                    y_metrics[col] = 0
 
-                z_metric = (values > 0).sum()
-                
+            # Build result rows
+            summaries = []
+            for col in non_numeric_cols:
+                summaries.append({
+                    "Feature Name": col, "X (Mean)": "N/A", "Y (95th Pct %)": "N/A",
+                    "Z (Occurrence)": "N/A", "Count": "N/A", "Average": "N/A"
+                })
+            for col in numeric_cols:
                 summaries.append({
                     "Feature Name": col,
-                    "X (Mean)": f"{mean_val:.2f}",
-                    "Y (95th Pct %)": f"{y_metric:.2f}%",
-                    "Z (Occurrence)": z_metric,
-                    "Count": f"{values.sum():.2f}",
-                    "Average": f"{mean_val:.2f}"
+                    "X (Mean)": f"{means[col]:.2f}",
+                    "Y (95th Pct %)": f"{y_metrics[col]:.2f}%",
+                    "Z (Occurrence)": occurrences[col],
+                    "Count": f"{sums[col]:.2f}",
+                    "Average": f"{means[col]:.2f}"
                 })
 
             return pd.DataFrame(summaries)
@@ -1887,10 +1070,6 @@ def server(input, output, session):
             # Now concatenate with matching indices
             results = pd.concat([df_indexed, aq_results_indexed], axis=1).reset_index()
             results.rename(columns={'index': 'Subzone ID'}, inplace=True)
-
-            # Fill any remaining NaN values in AQ columns with 0
-            aq_cols = [col for col in results.columns if col.startswith('AQ') or col == 'EV']
-            results[aq_cols] = results[aq_cols].fillna(0)
 
             return results
         except (KeyError, ValueError, IndexError) as e:
@@ -2160,26 +1339,12 @@ def server(input, output, session):
         # If multiple ECs saved, aggregate across them
         if len(store) >= 2:
             # Build aggregation DataFrame
-            ev_frames = {}
-            for ec_name, ec in store.items():
-                if ec['results'] is not None:
-                    ev_frames[ec_name] = ec['results'][['Subzone ID', 'EV']].rename(columns={'EV': ec_name})
+            merged = eva_calculations.merge_multi_ec_ev(store)
 
-            if not ev_frames:
+            if merged is None:
                 return ui.p("No ECs have computed results. Configure and save ECs first.")
 
-            # Merge all EV columns on Subzone ID
-            merged = None
-            for ec_name, df in ev_frames.items():
-                if merged is None:
-                    merged = df
-                else:
-                    merged = merged.merge(df, on='Subzone ID', how='outer')
-
-            # Fill NaN with 0 and compute Total EV
-            ec_names = list(ev_frames.keys())
-            merged[ec_names] = merged[ec_names].fillna(0)
-            merged['Total EV'] = merged[ec_names].sum(axis=1)
+            ec_names = [c for c in merged.columns if c not in ('Subzone ID', 'Total EV')]
 
             total_ev = merged['Total EV'].sum()
             avg_ev = merged['Total EV'].mean()
@@ -2190,7 +1355,7 @@ def server(input, output, session):
                 ui.card(
                     ui.card_header(f"Aggregated Total EV ({len(ec_names)} ECs)"),
                     ui.layout_column_wrap(
-                        ui.value_box("Total EV (Sum)", f"{total_ev:.2f}", theme="primary"),
+                        ui.value_box("Total EV (Max)", f"{total_ev:.2f}", theme="primary"),
                         ui.value_box("Average Total EV", f"{avg_ev:.2f}", theme="info"),
                         ui.value_box("Max Total EV", f"{max_ev:.2f}", theme="success"),
                         ui.value_box("Min Total EV", f"{min_ev:.2f}", theme="warning"),
@@ -2237,24 +1402,11 @@ def server(input, output, session):
         display_limit = int(input.results_display_limit())
 
         if len(store) >= 2:
-            ev_frames = {}
-            for ec_name, ec in store.items():
-                if ec['results'] is not None:
-                    ev_frames[ec_name] = ec['results'][['Subzone ID', 'EV']].rename(columns={'EV': ec_name})
+            merged = eva_calculations.merge_multi_ec_ev(store)
 
-            if not ev_frames:
+            if merged is None:
                 return pd.DataFrame()
 
-            merged = None
-            for ec_name, df in ev_frames.items():
-                if merged is None:
-                    merged = df
-                else:
-                    merged = merged.merge(df, on='Subzone ID', how='outer')
-
-            ec_names = list(ev_frames.keys())
-            merged[ec_names] = merged[ec_names].fillna(0)
-            merged['Total EV'] = merged[ec_names].sum(axis=1)
             merged = merged.sort_values('Total EV', ascending=False)
 
             return merged.head(display_limit) if display_limit > 0 else merged
@@ -2287,6 +1439,15 @@ def server(input, output, session):
     @render.download(filename=lambda: f"MARBEFES_EVA_Results_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.xlsx")
     def download_results():
         """Export comprehensive analysis results to Excel."""
+        # Pass EUNIS overlay if available for habitat-level EV summary
+        eunis_data_for_export = None
+        try:
+            overlay = eunis_overlay.get()
+            if overlay is not None:
+                eunis_data_for_export = overlay[["Subzone_ID", "dominant_EUNIS", "dominant_EUNIS_name"]].copy()
+        except Exception:
+            pass
+
         return eva_export.generate_workbook(
             results=calculate_results(),
             uploaded_data=uploaded_data.get(),
@@ -2298,6 +1459,7 @@ def server(input, output, session):
                 'data_description': input.data_description() if input.data_description() else 'Not specified',
             },
             ec_store=ec_store.get(),
+            pa_summary_data=eunis_data_for_export,
         )
     
     @reactive.Effect
@@ -2437,6 +1599,7 @@ def server(input, output, session):
                 selected=subzone_ids[:3]
             )
 
+
     # Visualization
     @output
     @render.ui
@@ -2445,368 +1608,56 @@ def server(input, output, session):
         if results is None:
             return ui.div(
                 ui.p(
-                    "⚠️ No data to visualize. Please upload data in the Data Input tab first.",
+                    "\u26a0\ufe0f No data to visualize. Please upload data in the Data Input tab first.",
                     style="font-size: 1.1rem; text-align: center; color: #6c757d; padding: 2rem;"
                 )
             )
-        
+
         plot_type = input.plot_type()
-        
+
         if plot_type == "EV by Subzone":
-            # Create EV bar chart
-            fig = go.Figure(data=[
-                go.Bar(
-                    x=results['Subzone ID'],
-                    y=results['EV'],
-                    marker=dict(
-                        color=results['EV'],
-                        colorscale='Viridis',
-                        showscale=True,
-                        colorbar=dict(title="EV")
-                    ),
-                    text=results['EV'].round(2),
-                    textposition='outside'
-                )
-            ])
-            
-            fig.update_layout(
-                title="Ecological Value by Subzone",
-                xaxis_title="Subzone ID",
-                yaxis_title="Ecological Value (EV)",
-                height=500,
-                hovermode='x unified',
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-            
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="ev_plot"))
-            
+            html_str = eva_visualizations.create_ev_bar_chart(results)
+            return ui.HTML(html_str)
+
         elif plot_type == "Feature Distribution":
-            # Create feature heatmap
             df = uploaded_data.get()
             if df is not None and 'Subzone ID' in df.columns:
-                # Get feature columns (exclude Subzone ID)
-                feature_cols = [col for col in df.columns if col != 'Subzone ID']
-                
-                # Create heatmap data
-                heatmap_data = df[feature_cols].values
-                
-                fig = go.Figure(data=go.Heatmap(
-                    z=heatmap_data,
-                    x=feature_cols,
-                    y=df['Subzone ID'],
-                    colorscale='Blues',
-                    hoverongaps=False,
-                    colorbar=dict(title="Presence")
-                ))
-                
-                fig.update_layout(
-                    title="Feature Distribution Across Subzones",
-                    xaxis_title="Features",
-                    yaxis_title="Subzone ID",
-                    height=max(400, len(df) * 20),
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)'
-                )
-                
-                return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="feature_plot"))
-            
+                html_str = eva_visualizations.create_feature_heatmap(df)
+                return ui.HTML(html_str)
             return ui.p("Unable to generate feature distribution chart")
 
         elif plot_type == "AQ Breakdown by Subzone":
-            # Grouped bar chart showing active AQ scores per subzone with EV line
-            aq_columns = [col for col in results.columns if col.startswith('AQ')]
-            if not aq_columns:
-                return ui.p("No AQ scores available")
-
-            # Filter to active AQs (those with at least one non-zero value)
-            active_aqs = [col for col in aq_columns if results[col].abs().sum() > 0]
-            if not active_aqs:
-                return ui.p("No active AQ scores to display. All AQ values are zero.")
-
-            fig = go.Figure()
-
-            # Add bars for each active AQ
-            colors = px.colors.qualitative.Plotly
-            for i, aq in enumerate(active_aqs):
-                fig.add_trace(go.Bar(
-                    name=aq,
-                    x=results['Subzone ID'],
-                    y=results[aq],
-                    marker_color=colors[i % len(colors)],
-                    hovertemplate=f'{aq}: %{{y:.2f}}<extra></extra>'
-                ))
-
-            # Add EV line overlay
-            fig.add_trace(go.Scatter(
-                name='EV',
-                x=results['Subzone ID'],
-                y=results['EV'],
-                mode='lines+markers',
-                line=dict(color='black', width=2, dash='dot'),
-                marker=dict(size=6, color='black'),
-                hovertemplate='EV: %{y:.2f}<extra></extra>'
-            ))
-
-            fig.update_layout(
-                title="AQ Score Breakdown by Subzone",
-                xaxis_title="Subzone ID",
-                yaxis_title="Score (0-5)",
-                yaxis=dict(range=[0, 5.5]),
-                barmode='group',
-                height=550,
-                hovermode='x unified',
-                legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="aq_breakdown_plot"))
+            html_str = eva_visualizations.create_aq_breakdown_chart(results)
+            if html_str is None:
+                return ui.p("No active AQ scores to display.")
+            return ui.HTML(html_str)
 
         elif plot_type == "AQ Radar Comparison":
-            # Radar chart comparing AQ profiles across selected subzones
             selected = list(input.radar_subzones()) if input.radar_subzones() else []
             if not selected:
                 return ui.div(
-                    ui.p("👈 Select 1-5 subzones from the sidebar to compare their AQ profiles.",
+                    ui.p("\U0001f448 Select 1-5 subzones from the sidebar to compare their AQ profiles.",
                          style="font-size: 1.1rem; text-align: center; color: #6c757d; padding: 2rem;")
                 )
-
-            aq_columns = [col for col in results.columns if col.startswith('AQ')]
-            if not aq_columns:
+            html_str = eva_visualizations.create_aq_radar_chart(results, selected)
+            if html_str is None:
                 return ui.p("No AQ scores available")
-
-            fig = go.Figure()
-
-            line_colors = px.colors.qualitative.Plotly
-            fill_colors = [
-                'rgba(99,110,250,0.15)', 'rgba(239,85,59,0.15)', 'rgba(0,204,150,0.15)',
-                'rgba(171,99,250,0.15)', 'rgba(255,161,90,0.15)'
-            ]
-
-            for i, subzone in enumerate(selected):
-                row = results[results['Subzone ID'] == subzone]
-                if row.empty:
-                    continue
-                values = row[aq_columns].values.flatten().tolist()
-                values.append(values[0])  # Close the polygon
-                categories = aq_columns + [aq_columns[0]]
-
-                fig.add_trace(go.Scatterpolar(
-                    r=values,
-                    theta=categories,
-                    fill='toself',
-                    fillcolor=fill_colors[i % len(fill_colors)],
-                    name=str(subzone),
-                    line=dict(color=line_colors[i % len(line_colors)], width=2),
-                    hovertemplate='%{theta}: %{r:.2f}<extra>' + str(subzone) + '</extra>'
-                ))
-
-            fig.update_layout(
-                polar=dict(
-                    radialaxis=dict(visible=True, range=[0, 5]),
-                    angularaxis=dict(direction="clockwise")
-                ),
-                title="AQ Profile Comparison by Subzone",
-                height=600,
-                showlegend=True,
-                legend=dict(orientation='h', yanchor='bottom', y=-0.15, xanchor='center', x=0.5),
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="radar_plot"))
+            return ui.HTML(html_str)
 
         elif plot_type == "AQ Heatmap":
-            # Heatmap of AQ scores across subzones, sorted by EV descending
-            aq_columns = [col for col in results.columns if col.startswith('AQ')]
-            if not aq_columns:
-                return ui.p("No AQ scores available")
-
-            display_cols = aq_columns + ['EV']
-            sorted_results = results.sort_values('EV', ascending=True)
-
-            z_data = sorted_results[display_cols].values
-            x_labels = display_cols
-            y_labels = sorted_results['Subzone ID'].tolist()
-
             color_scheme = input.color_scheme()
-
-            fig = go.Figure(data=go.Heatmap(
-                z=z_data,
-                x=x_labels,
-                y=y_labels,
-                colorscale=color_scheme,
-                zmin=0,
-                zmax=5,
-                text=np.round(z_data, 1),
-                texttemplate="%{text}",
-                textfont={"size": 10},
-                hoverongaps=False,
-                colorbar=dict(title="Score")
-            ))
-
-            fig.update_layout(
-                title="AQ Scores × Subzones (sorted by EV)",
-                xaxis_title="Assessment Questions",
-                yaxis_title="Subzone ID",
-                height=max(450, len(sorted_results) * 25),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)'
-            )
-
-            return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="aq_heatmap_plot"))
+            html_str = eva_visualizations.create_aq_heatmap(results, color_scheme)
+            if html_str is None:
+                return ui.p("No AQ scores available")
+            return ui.HTML(html_str)
 
         else:  # AQ Scores
-            # Create AQ scores histogram
-            aq_columns = [col for col in results.columns if col.startswith('AQ')]
-            
-            if aq_columns:
-                # Melt the dataframe to get all AQ scores in one column
-                aq_data = results[aq_columns].values.flatten()
-                
-                fig = go.Figure(data=[
-                    go.Histogram(
-                        x=aq_data,
-                        nbinsx=30,
-                        marker=dict(
-                            color='rgba(255, 152, 0, 0.7)',
-                            line=dict(color='rgba(255, 152, 0, 1)', width=1)
-                        )
-                    )
-                ])
-                
-                fig.update_layout(
-                    title="Distribution of Assessment Question Scores",
-                    xaxis_title="AQ Score",
-                    yaxis_title="Frequency",
-                    height=400,
-                    showlegend=False,
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    paper_bgcolor='rgba(0,0,0,0)'
-                )
-                
-                return ui.HTML(fig.to_html(include_plotlyjs="cdn", div_id="aq_plot"))
-            
-            return ui.p("No AQ scores available")
+            html_str = eva_visualizations.create_aq_histogram(results)
+            if html_str is None:
+                return ui.p("No AQ scores available")
+            return ui.HTML(html_str)
 
     # === GIS MAP FUNCTIONS ===
-
-    def auto_zoom_level(bounds):
-        """Calculate appropriate zoom level from bounding box [minx, miny, maxx, maxy]."""
-        lat_diff = bounds[3] - bounds[1]
-        lon_diff = bounds[2] - bounds[0]
-        max_diff = max(lat_diff, lon_diff)
-        if max_diff > 10:
-            return 5
-        elif max_diff > 5:
-            return 7
-        elif max_diff > 1:
-            return 9
-        elif max_diff > 0.1:
-            return 12
-        else:
-            return 14
-
-    def create_ev_map(map_gdf, variable, color_scheme_name, classification, basemap_name, opacity):
-        """Create a folium choropleth map from a GeoDataFrame with EVA results."""
-        bounds = map_gdf.total_bounds
-        center = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-        zoom = auto_zoom_level(bounds)
-
-        tiles = BASEMAP_TILES.get(basemap_name, "cartodbpositron")
-        m = folium.Map(location=center, zoom_start=zoom, tiles=tiles)
-
-        # Prepare variable data
-        map_gdf = map_gdf.copy()
-        if variable in map_gdf.columns:
-            map_gdf[variable] = pd.to_numeric(map_gdf[variable], errors='coerce').fillna(0)
-        else:
-            map_gdf[variable] = 0
-
-        vmin = float(map_gdf[variable].min())
-        vmax = float(map_gdf[variable].max())
-        if vmax == vmin:
-            vmax = vmin + 1
-
-        use_5class = classification.startswith("EVA")
-
-        if use_5class:
-            def style_fn(feature):
-                val = feature['properties'].get(variable, 0)
-                if val is None:
-                    val = 0
-                color = EVA_5CLASS_COLORS[-1]
-                for i in range(len(EVA_5CLASS_BINS) - 1):
-                    if val <= EVA_5CLASS_BINS[i + 1]:
-                        color = EVA_5CLASS_COLORS[i]
-                        break
-                return {
-                    'fillColor': color,
-                    'color': '#333333',
-                    'weight': 0.5,
-                    'fillOpacity': opacity
-                }
-        else:
-            color_schemes = {
-                "YlOrRd": cm.linear.YlOrRd_09,
-                "Viridis": cm.linear.viridis,
-                "Blues": cm.linear.Blues_09,
-                "RdYlGn": cm.linear.RdYlGn_11,
-                "Plasma": cm.linear.plasma,
-            }
-            colormap = color_schemes.get(color_scheme_name, cm.linear.YlOrRd_09)
-            colormap = colormap.scale(vmin, vmax)
-            colormap.caption = variable
-
-            def style_fn(feature):
-                val = feature['properties'].get(variable, 0)
-                if val is None:
-                    val = 0
-                return {
-                    'fillColor': colormap(val),
-                    'color': '#333333',
-                    'weight': 0.5,
-                    'fillOpacity': opacity
-                }
-
-        # Build tooltip fields
-        tooltip_fields = ['Subzone ID', variable]
-        tooltip_aliases = ['Subzone:', f'{variable}:']
-        if variable != 'EV' and 'EV' in map_gdf.columns:
-            tooltip_fields.append('EV')
-            tooltip_aliases.append('EV:')
-
-        # Round numeric columns for tooltips
-        for col in tooltip_fields:
-            if col in map_gdf.columns and col != 'Subzone ID':
-                map_gdf[col] = map_gdf[col].round(3)
-
-        folium.GeoJson(
-            map_gdf.to_json(),
-            style_function=style_fn,
-            tooltip=folium.GeoJsonTooltip(
-                fields=tooltip_fields,
-                aliases=tooltip_aliases,
-                sticky=True,
-                style="font-size: 13px; padding: 8px;"
-            )
-        ).add_to(m)
-
-        # Add legend
-        if use_5class:
-            legend_html = '<div style="position: fixed; bottom: 30px; left: 30px; z-index: 1000; background: white; padding: 12px 16px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); font-size: 13px;">'
-            legend_html += f'<p style="margin: 0 0 8px; font-weight: 700;">{variable}</p>'
-            for i in range(len(EVA_5CLASS_COLORS)):
-                legend_html += f'<p style="margin: 2px 0;"><span style="background:{EVA_5CLASS_COLORS[i]}; width:18px; height:14px; display:inline-block; margin-right:6px; border-radius:2px;"></span>{EVA_5CLASS_LABELS[i]}</p>'
-            legend_html += '</div>'
-            m.get_root().html.add_child(folium.Element(legend_html))
-        else:
-            colormap.add_to(m)
-
-        folium.plugins.Fullscreen(position='topright').add_to(m)
-        m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]])
-
-        return m._repr_html_()
 
     # Map output renderer
     @output
@@ -2841,50 +1692,12 @@ def server(input, output, session):
             if not assignments:
                 return ui.p("No habitat assignments available.", style="color: #6c757d; text-align: center; padding: 2rem;")
 
-            map_gdf = gdf.merge(
-                pd.DataFrame(list(assignments.items()), columns=["Subzone ID", "habitat_code"]),
-                on="Subzone ID", how="inner"
+            map_html = eva_map.create_habitat_map(
+                gdf, assignments,
+                basemap_name=input.map_basemap(),
+                opacity=float(input.map_opacity())
             )
-            map_gdf["habitat_name"] = map_gdf["habitat_code"].map(lambda c: pa_config.EUNIS_LOOKUP.get(c, c))
-
-            unique_habitats = map_gdf["habitat_code"].unique().tolist()
-            color_map = {h: pa_config.HABITAT_PALETTE[i % len(pa_config.HABITAT_PALETTE)]
-                        for i, h in enumerate(unique_habitats)}
-
-            bounds = map_gdf.total_bounds
-            center = [(bounds[1] + bounds[3]) / 2, (bounds[0] + bounds[2]) / 2]
-            zoom = auto_zoom_level(bounds)
-            tiles = BASEMAP_TILES.get(input.map_basemap(), "cartodbpositron")
-            m = folium.Map(location=center, zoom_start=zoom, tiles=tiles)
-
-            def habitat_style(feature):
-                code = feature["properties"].get("habitat_code", "")
-                return {
-                    "fillColor": color_map.get(code, "#999999"),
-                    "color": "#333333",
-                    "weight": 0.5,
-                    "fillOpacity": float(input.map_opacity()),
-                }
-
-            folium.GeoJson(
-                map_gdf.to_json(),
-                style_function=habitat_style,
-                tooltip=folium.GeoJsonTooltip(
-                    fields=["Subzone ID", "habitat_code", "habitat_name"],
-                    aliases=["Subzone:", "EUNIS Code:", "Habitat:"],
-                )
-            ).add_to(m)
-
-            legend_html = '<div style="position: fixed; bottom: 30px; left: 30px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); z-index: 1000; font-size: 0.85rem;">'
-            legend_html += '<strong>Habitat Types</strong><br>'
-            for code in unique_habitats:
-                name = pa_config.EUNIS_LOOKUP.get(code, code)
-                color = color_map[code]
-                legend_html += f'<span style="background:{color}; width:12px; height:12px; display:inline-block; margin-right:5px; border-radius:2px;"></span>{code} - {name}<br>'
-            legend_html += '</div>'
-            m.get_root().html.add_child(folium.Element(legend_html))
-
-            return ui.HTML(m._repr_html_())
+            return ui.HTML(map_html)
 
         if results is None:
             return ui.div(
@@ -2913,7 +1726,8 @@ def server(input, output, session):
             basemap = input.map_basemap()
             opacity = input.map_opacity()
 
-            map_html = create_ev_map(merged, variable, color_scheme, classification, basemap, opacity)
+            eunis = eunis_overlay.get()
+            map_html = eva_map.create_ev_map(merged, variable, color_scheme, classification, basemap, opacity, eunis_gdf=eunis)
 
             vals = merged[variable] if variable in merged.columns else pd.Series([0])
             vals = pd.to_numeric(vals, errors='coerce').fillna(0)
@@ -2948,6 +1762,13 @@ def server(input, output, session):
     pa_habitat_assignments = reactive.Value({})
     pa_custom_habitats = reactive.Value([])
     pa_custom_benefits = reactive.Value([])
+
+    def _lookup_habitat_name(code):
+        """Resolve habitat name from custom habitats first, then global lookup."""
+        for h in pa_custom_habitats.get():
+            if h["code"] == code:
+                return h["name"]
+        return pa_config.EUNIS_LOOKUP.get(code, code)
 
     @output
     @render.ui
@@ -3022,7 +1843,7 @@ def server(input, output, session):
                 val = input[f"pa_assign_{sid}"]()
                 if val:
                     assignments[sid] = val
-            except Exception:
+            except (KeyError, TypeError):
                 pass
         pa_habitat_assignments.set(assignments)
 
@@ -3090,7 +1911,7 @@ def server(input, output, session):
 
         header_cells = [ui.tags.th("Benefit"), ui.tags.th("Unit")]
         for code in habitat_codes:
-            name = pa_config.EUNIS_LOOKUP.get(code, code)
+            name = _lookup_habitat_name(code)
             header_cells.append(ui.tags.th(code, title=name, style="cursor: help;"))
 
         body_rows = []
@@ -3147,7 +1968,7 @@ def server(input, output, session):
                     val = input[f"supply_{slug}_{code}"]()
                     if val is not None:
                         quantities[code] = float(val)
-                except Exception:
+                except (KeyError, TypeError, ValueError):
                     pass
             if quantities:
                 supply_data[name] = quantities
@@ -3167,7 +1988,8 @@ def server(input, output, session):
             return
         current.append({"code": code, "name": name})
         pa_custom_habitats.set(current)
-        pa_config.EUNIS_LOOKUP[code] = name
+        # Do NOT mutate pa_config.EUNIS_LOOKUP — it leaks between sessions.
+        # Custom habitats are stored in pa_custom_habitats reactive value only.
         ui.notification_show(f"Added custom habitat: {code} - {name}", type="message")
 
     @reactive.Effect
@@ -3261,6 +2083,161 @@ def server(input, output, session):
             pa_completeness=completeness, pa_unit=unit,
         )
 
+    # =====================================================================
+    # EUNIS L3 Overlay (EUSeaMap integration)
+    # =====================================================================
+    eunis_overlay = reactive.Value(None)
+
+    @reactive.Calc
+    def cached_eva_data():
+        eva_path = os.environ.get("MARBEFES_EVA_DATA_PATH", "")
+        if not eva_path or not os.path.exists(eva_path):
+            return None
+        logger.info("Loading EVA data from %s (cached)", eva_path)
+        return gpd.read_file(eva_path)
+
+    @reactive.Effect
+    @reactive.event(input.upload_eunis_overlay)
+    def _handle_eunis_upload():
+        file_info = input.upload_eunis_overlay()
+        if file_info is None or len(file_info) == 0:
+            return
+        try:
+            import eunis_data
+            gdf = eunis_data.load_eunis_overlay(file_info[0]["datapath"])
+            eunis_overlay.set(gdf)
+            # Auto-populate habitat assignments from overlay
+            assignments = {
+                row["Subzone_ID"]: row["dominant_EUNIS"]
+                for _, row in gdf.iterrows()
+                if pd.notna(row.get("dominant_EUNIS"))
+            }
+            pa_habitat_assignments.set(assignments)
+            n_types = gdf["dominant_EUNIS"].nunique()
+            n_with = gdf["dominant_EUNIS"].notna().sum()
+            ui.notification_show(
+                f"EUNIS overlay loaded: {n_types} habitat types, "
+                f"{n_with} subzones with data.",
+                type="message", duration=5,
+            )
+            # Check for HFS/BH habitats and notify user
+            suggestions = eunis_data.suggest_feature_classifications(gdf, [])
+            hfs_count = suggestions.get("_hfs_subzone_count", 0)
+            if hfs_count > 0:
+                ui.notification_show(
+                    f"Note: {hfs_count} subzones have reef/biogenic habitats (EUNIS A3/A4/MC35). "
+                    f"Consider classifying relevant species as HFS/BH in the EC Features tab.",
+                    type="message", duration=8,
+                )
+        except Exception as e:
+            logger.error("EUNIS upload error: %s", e)
+            ui.notification_show(f"Error loading EUNIS overlay: {e}", type="error")
+
+    @output
+    @render.ui
+    def eunis_status_ui():
+        overlay = eunis_overlay.get()
+        if overlay is None:
+            return ui.div()
+        n_types = overlay["dominant_EUNIS"].nunique()
+        n_with = overlay["dominant_EUNIS"].notna().sum()
+        n_total = len(overlay)
+        return ui.div(
+            ui.p(
+                f"✅ {n_types} EUNIS types, {n_with}/{n_total} subzones matched",
+                style="color: #28a745; font-weight: 600; margin-top: 0.5rem;",
+            ),
+            class_="info-box",
+        )
+
+    @output
+    @render.ui
+    def eunis_accounts_ui():
+        overlay = eunis_overlay.get()
+        if overlay is None:
+            return ui.p(
+                "Upload a EUNIS overlay (.gpkg) in the sidebar to see BBT8 accounts.",
+                style="color: #6c757d; text-align: center; padding: 2rem;",
+            )
+        return ui.TagList(
+            ui.output_table("eunis_accounts_table"),
+        )
+
+    @output
+    @render.table
+    def eunis_accounts_table():
+        overlay = eunis_overlay.get()
+        if overlay is None:
+            return pd.DataFrame()
+        import eunis_data
+        eva = cached_eva_data()
+        if eva is None:
+            return pd.DataFrame({"Error": ["EVA data not found"]})
+        extent = eunis_data.compute_eunis_extent(overlay, unit=input.pa_area_unit())
+        condition = eunis_data.compute_eunis_condition(overlay, eva)
+        accounts = eunis_data.build_accounts_summary(extent, condition)
+        accounts.columns = ["EUNIS Code", "Habitat", "Area (m2)", "Habitat EV", "Confidence"]
+        accounts["Habitat EV"] = accounts["Habitat EV"].round(2)
+        accounts["Confidence"] = accounts["Confidence"].round(2)
+        accounts["Area (m2)"] = accounts["Area (m2)"].apply(lambda x: f"{x:,.0f}")
+        return accounts
+
+    @render.download(
+        filename=lambda: f"MARBEFES_BBT8_PhysicalAccounts_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx"
+    )
+    def pa_download_bbt8():
+        overlay = eunis_overlay.get()
+        if overlay is None:
+            ui.notification_show("Upload a EUNIS overlay first.", type="warning")
+            return None
+        import eunis_data
+        from pa_export import generate_bbt8_workbook
+
+        eva = cached_eva_data()
+        if eva is None:
+            ui.notification_show("EVA data not found.", type="error")
+            return None
+
+        unit = input.pa_area_unit()
+        extent = eunis_data.compute_eunis_extent(overlay, unit=unit)
+        condition = eunis_data.compute_eunis_condition(overlay, eva)
+        supply = eunis_data.compute_eunis_supply(overlay, eva)
+        accounts = eunis_data.build_accounts_summary(extent, condition)
+        missing = eunis_data.build_missing_values(overlay, eva, total_bbt_area_m2=0)
+
+        # main_values: per-subzone
+        eva_sub = eva[["Subzone_ID", "TotalEV_MAX", "Confidence"]].copy() if "Subzone_ID" in eva.columns else pd.DataFrame()
+        if not eva_sub.empty:
+            # Drop geometry if present
+            if "geometry" in eva_sub.columns:
+                eva_sub = eva_sub.drop(columns="geometry")
+            mv = overlay[["Subzone_ID", "dominant_EUNIS"]].merge(
+                eva_sub, on="Subzone_ID", how="left",
+            )
+            mv.columns = ["Subzone_ID", "EUNIS_code", "Habitat_EV", "Habitat_confidence"]
+        else:
+            mv = overlay[["Subzone_ID", "dominant_EUNIS"]].copy()
+            mv.columns = ["Subzone_ID", "EUNIS_code"]
+            mv["Habitat_EV"] = np.nan
+            mv["Habitat_confidence"] = np.nan
+
+        metadata = {
+            "Report": "SEEA EA Physical Accounts (BBT8 format)",
+            "BBT": input.pa_eaa_name() or "Not specified",
+            "Boundary": input.pa_boundary_desc() or "Not specified",
+            "Year": str(input.pa_accounting_year()),
+            "Framework": "SEEA EA / MARBEFES WP4",
+            "Generated": pd.Timestamp.now().strftime("%Y-%m-%d"),
+            "EUNIS Source": "EMODnet EUSeaMap 2023",
+            "EVA Version": "MARBEFES EVA v3.4",
+        }
+
+        return generate_bbt8_workbook(
+            accounts=accounts, main_values=mv, extent=extent,
+            condition=condition, supply=supply, metadata=metadata,
+            missing_values=missing,
+        )
+
     @reactive.Effect
     @reactive.event(pa_habitat_assignments)
     def _update_map_variable_for_pa():
@@ -3270,6 +2247,9 @@ def server(input, output, session):
         if assignments:
             base_choices.append("Habitat Type (PA)")
         ui.update_select("map_variable", choices=base_choices)
+
+
+# Create the app with static file serving
 
 
 # Create the app with static file serving
