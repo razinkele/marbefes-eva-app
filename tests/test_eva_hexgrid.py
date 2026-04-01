@@ -157,3 +157,35 @@ class TestParsDrawnPolygon:
         })
         result = parse_drawn_polygon(geojson)
         assert result.geometry.is_valid.all()
+
+
+class TestIntegration:
+    """Integration tests: generated grid works with EVA pipeline."""
+
+    def test_grid_has_correct_columns_for_pipeline(self):
+        """Generated grid should have exactly the columns the pipeline expects."""
+        from eva_hexgrid import generate_h3_grid
+        gdf = _make_gdf(LARGE_POLYGON)
+        grid = generate_h3_grid(gdf, resolution=8)
+        # Pipeline expects at minimum: 'Subzone ID' and 'geometry'
+        assert "Subzone ID" in grid.columns
+        assert "geometry" in grid.columns
+        # Accept both legacy object dtype and modern pandas StringDtype
+        import pandas as pd
+        sid_dtype = grid["Subzone ID"].dtype
+        assert sid_dtype == object or isinstance(sid_dtype, pd.StringDtype)
+
+    def test_grid_can_merge_with_sample_csv(self):
+        """Grid should merge with CSV data on Subzone ID."""
+        import pandas as pd
+        from eva_hexgrid import generate_h3_grid
+        gdf = _make_gdf(SMALL_POLYGON)
+        grid = generate_h3_grid(gdf, resolution=8)
+        # Simulate CSV data with matching Subzone IDs
+        csv_data = pd.DataFrame({
+            "Subzone ID": grid["Subzone ID"].tolist(),
+            "Species_A": range(len(grid)),
+        })
+        merged = grid.merge(csv_data, on="Subzone ID", how="inner")
+        assert len(merged) == len(grid)
+        assert "Species_A" in merged.columns
