@@ -197,7 +197,8 @@ def fetch_cmems_covariates(
     lon_max = float(bounds[2]) + buf
     lat_max = float(bounds[3]) + buf
 
-    centroids = gdf_wgs.geometry.centroid
+    # Compute centroids on a projected CRS to avoid geographic CRS warning
+    centroids = gdf_wgs.to_crs(3857).geometry.centroid.to_crs(4326)
     lons = centroids.x.values
     lats = centroids.y.values
 
@@ -246,8 +247,9 @@ def fetch_cmems_covariates(
                 maximum_longitude=lon_max,
                 minimum_latitude=lat_min,
                 maximum_latitude=lat_max,
-                minimum_depth=0.0,
-                maximum_depth=1.0,  # surface only for 3D vars (saves huge download)
+                minimum_depth=0.49,  # first available depth level (~0.49–0.51m in PHY/BGC)
+                maximum_depth=2.0,   # surface only; avoids full water-column download
+                coordinates_selection_method="nearest",  # snap to available depth; no boundary warning
                 username=username,
                 password=password,
                 **t_kwargs,

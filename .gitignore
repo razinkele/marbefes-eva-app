@@ -96,3 +96,7 @@ NaN_FIX_AND_EXCEL_EXPORT_SUMMARY.md
 NaN_FIX_COMPLETE_SOLUTION.md
 QUICK_DEPLOY_GUIDE.md
 .Rproj.user
+
+# Environment / secrets
+.env
+*.env
