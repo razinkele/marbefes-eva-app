@@ -408,6 +408,8 @@ def server(input, output, session):
                 return
             boundary_polygon.set(row.to_crs(epsg=4326))
             generated_grid.set(None)
+            sdm_covariates.set(None)
+            sdm_results.set(None)
             ui.notification_show(f"BBT boundary loaded: {name}", type="message", duration=4)
         except Exception as exc:
             ui.notification_show(f"Failed to load BBT coverage: {exc}", type="error", duration=8)
@@ -663,14 +665,15 @@ def server(input, output, session):
                 if not is_numeric and color_dict:
                     legend_items = "".join(
                         f'<li><span style="background:{c};width:14px;height:14px;display:inline-block;'
-                        f'border-radius:2px;margin-right:5px;"></span>{v}</li>'
+                        f'border-radius:2px;margin-right:5px;"></span>{html_escape(str(v))}</li>'
                         for v, c in list(color_dict.items())[:15]
                     )
+                    layer_label = html_escape(_SDM_MAP_COLS.get(selected_layer, selected_layer))
                     legend_html = (
                         '<div style="position:fixed;bottom:30px;right:10px;z-index:1000;'
                         'background:white;padding:8px 12px;border-radius:6px;'
                         'box-shadow:0 1px 5px rgba(0,0,0,0.4);font-size:12px;max-height:300px;overflow-y:auto;">'
-                        f'<b>{_SDM_MAP_COLS.get(selected_layer, selected_layer)}</b>'
+                        f'<b>{layer_label}</b>'
                         f'<ul style="list-style:none;padding:0;margin:4px 0 0;">{legend_items}</ul></div>'
                     )
                     m.get_root().html.add_child(folium.Element(legend_html))
@@ -1698,8 +1701,11 @@ def server(input, output, session):
         except Exception as e:
             logger.warning("Could not fetch EUNIS overlay for export: %s", e)
 
+        results = calculate_results()
+        if results is None:
+            raise ValueError("No results to export — upload data and run the analysis first.")
         return eva_export.generate_workbook(
-            results=calculate_results(),
+            results=results,
             uploaded_data=uploaded_data.get(),
             user_classifications=feature_classifications.get(),
             data_type=input.data_type(),
@@ -3517,6 +3523,12 @@ def server(input, output, session):
         folium.plugins.Fullscreen(position="topright").add_to(m)
 
         valid = plot_gdf["sdm_pred"].dropna()
+        if len(valid) == 0:
+            return ui.div(
+                ui.p("All grid cells have no prediction (all NaN). "
+                     "Check that sampling sites overlap the study grid.",
+                     style="color:#c00;padding:1rem;")
+            )
         vmin, vmax = float(valid.min()), float(valid.max())
         colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
         colormap.caption = f"Predicted: {response_col}"
@@ -3605,6 +3617,8 @@ def server(input, output, session):
         folium.plugins.Fullscreen(position="topright").add_to(m)
 
         valid = plot_gdf["sdm_unc"].dropna()
+        if len(valid) == 0:
+            return ui.p("No uncertainty values to display.", style="color:#999;padding:1rem;")
         vmin, vmax = float(valid.min()), float(valid.max())
         colormap = cm.linear.PuBu_09.scale(vmin, vmax)
         label = "Kriging variance" if res["method"] in ("kriging", "regression_kriging") else "GP std"

@@ -170,6 +170,15 @@ def prepare_features(
     else:
         feat_cols = num_cols
 
+    # Warn about all-NaN feature columns (silently dropped by dropna — grid may still have them)
+    nan_cols = [c for c in feat_cols if work[c].isna().all()]
+    if nan_cols:
+        logger.warning(
+            "prepare_features: %d covariate column(s) are all-NaN and will be excluded "
+            "from the model: %s", len(nan_cols), nan_cols
+        )
+        feat_cols = [c for c in feat_cols if c not in nan_cols]
+
     # Drop rows with any NaN in features or response
     work = work.dropna(subset=[response_col] + feat_cols)
 
@@ -367,6 +376,8 @@ def fit_random_forest(
         n_jobs=-1,
         random_state=random_state,
     )
+    if response_type == "binary":
+        kwargs["class_weight"] = "balanced"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if response_type == "binary":
@@ -421,8 +432,12 @@ def fit_xgboost(
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         if response_type == "binary":
+            pos = float((y > 0).sum())
+            neg = float((y == 0).sum())
+            scale_pos = max(1.0, neg / pos) if pos > 0 else 1.0
             model = XGBClassifier(
-                use_label_encoder=False, eval_metric="logloss", **common
+                use_label_encoder=False, eval_metric="logloss",
+                scale_pos_weight=scale_pos, **common
             ).fit(X, y.astype(int))
         else:
             model = XGBRegressor(**common).fit(X, y)
@@ -693,6 +708,8 @@ def predict_grid(
         idw_raw = idw_model.predict(grid_coords_m)
         if response_type == "binary":
             idw_raw = np.clip(idw_raw, 0, 1)
+        elif response_type == "count":
+            idw_raw = np.clip(idw_raw, 0, None)
         collected["idw"] = idw_raw
 
     # Ordinary Kriging
@@ -707,6 +724,8 @@ def predict_grid(
         ok_arr = np.asarray(z_ok).ravel().astype(float)
         if response_type == "binary":
             ok_arr = np.clip(ok_arr, 0, 1)
+        elif response_type == "count":
+            ok_arr = np.clip(ok_arr, 0, None)
         collected["kriging"] = ok_arr
         uncertainty_arr = np.asarray(ss_ok).ravel().astype(float)  # kriging variance
 
@@ -758,6 +777,11 @@ def predict_grid(
 
     if gp_model is not None and predictor_cols:
         scaler = getattr(gp_model, "_eva_scaler", None)
+        if scaler is None:
+            logger.warning(
+                "GP predict_grid: no _eva_scaler attached to GP model — "
+                "predictions will use raw (unscaled) features and may be inaccurate."
+            )
         X_sc = scaler.transform(X_grid) if scaler is not None else X_grid
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -1116,7 +1140,9 @@ def analyse_sampling_data(
 
     # ── Detect data type ─────────────────────────────────────────────────────
     unique_vals = set(valid.unique())
-    if unique_vals.issubset({0.0, 1.0}):
+    if n_valid == 0:
+        data_type = "continuous"  # unknown — default
+    elif unique_vals.issubset({0.0, 1.0}):
         data_type = "binary"
     elif all(float(v).is_integer() for v in unique_vals):
         data_type = "count"
