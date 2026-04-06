@@ -1934,10 +1934,32 @@ app_ui = ui.page_fluid(
                 # Method
                 ui.h6("Modelling Method", style="font-weight:600;"),
                 ui.input_radio_buttons("sdm_method", None,
-                    choices={"ensemble": "Ensemble (GAM + IDW, recommended)",
-                             "gam":      "GAM only",
-                             "idw":      "IDW only"},
+                    choices={
+                        "ensemble":          "🔀 Ensemble (recommended)",
+                        "regression_kriging":"⭐ Regression Kriging (RF + OK)",
+                        "kriging":           "🌐 Ordinary Kriging",
+                        "rf":                "🌲 Random Forest",
+                        "gp":                "🔮 Gaussian Process",
+                        "gam":               "📈 GAM only",
+                        "idw":               "📍 IDW only",
+                    },
                     selected="ensemble"),
+
+                # Kriging options (shown for kriging/regression_kriging)
+                ui.panel_conditional(
+                    "['kriging','regression_kriging','ensemble'].includes(input.sdm_method)",
+                    ui.tags.details(
+                        ui.tags.summary("Kriging options",
+                                        style="font-size:0.82rem;cursor:pointer;color:#006994;margin-top:4px;"),
+                        ui.input_select("sdm_variogram_model", "Variogram model",
+                            choices={"spherical": "Spherical", "gaussian": "Gaussian",
+                                     "exponential": "Exponential",
+                                     "linear": "Linear", "power": "Power"},
+                            selected="spherical", width="100%"),
+                        ui.input_checkbox("sdm_show_uncertainty",
+                                          "Show uncertainty map", value=True),
+                    ),
+                ),
 
                 # Advanced options (collapsible)
                 ui.tags.details(
@@ -1947,6 +1969,8 @@ app_ui = ui.page_fluid(
                                      min=0.5, max=5.0, step=0.5, width="100%"),
                     ui.input_numeric("sdm_gam_splines", "GAM splines per term", value=10,
                                      min=4, max=20, step=1, width="100%"),
+                    ui.input_numeric("sdm_rf_trees", "RF: number of trees", value=200,
+                                     min=50, max=1000, step=50, width="100%"),
                     ui.input_slider("sdm_ensemble_weight", "GAM weight in ensemble",
                                     min=0.0, max=1.0, value=0.5, step=0.1, width="100%"),
                 ),
@@ -1973,10 +1997,26 @@ app_ui = ui.page_fluid(
                     ui.nav_panel("🗺️ Predicted Distribution",
                         ui.output_ui("sdm_map_output"),
                     ),
-                    ui.nav_panel("📊 Model Diagnostics",
+                    ui.nav_panel("🎯 Uncertainty",
+                        ui.div(
+                            ui.p("Kriging variance or GP standard deviation — "
+                                 "lower values indicate more confident predictions.",
+                                 style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
+                            ui.output_ui("sdm_uncertainty_map_output"),
+                        ),
+                    ),
+                    ui.nav_panel("📊 Diagnostics",
                         ui.div(
                             ui.output_ui("sdm_diagnostics_output"),
                             style="padding:1rem;"
+                        ),
+                    ),
+                    ui.nav_panel("📉 Variogram",
+                        ui.div(
+                            ui.p("Empirical and fitted variogram for Kriging-based methods.",
+                                 style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
+                            ui.output_ui("sdm_variogram_output"),
+                            style="padding:0.5rem;"
                         ),
                     ),
                     ui.nav_panel("📋 Partial Effects (GAM)",

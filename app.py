@@ -2943,61 +2943,144 @@ def server(input, output, session):
                 sites_with_cov, predictor_cols_available, response_col, response_type
             )
 
-            idw_power    = float(input.sdm_idw_power() or 2.0)
-            gam_splines  = int(input.sdm_gam_splines() or 10)
-            ens_weight   = float(input.sdm_ensemble_weight() or 0.5)
+            idw_power       = float(input.sdm_idw_power() or 2.0)
+            gam_splines     = int(input.sdm_gam_splines() or 10)
+            ens_weight      = float(input.sdm_ensemble_weight() or 0.5)
+            rf_trees        = int(getattr(input, "sdm_rf_trees", lambda: 200)() or 200)
+            variogram_model = getattr(input, "sdm_variogram_model", lambda: "spherical")() or "spherical"
 
-            gam_model = None
-            idw_model = None
+            gam_model = idw_model = kriging_model = rf_model = gp_model = rk_model = None
 
-            # 3a. Fit GAM
-            if method in ("gam", "ensemble"):
+            # 3. Fit models based on selected method
+            needs_gam     = method in ("gam", "ensemble")
+            needs_idw     = method in ("idw", "ensemble")
+            needs_kriging = method in ("kriging", "ensemble")
+            needs_rf      = method in ("rf", "ensemble")
+            needs_gp      = method in ("gp",)
+            needs_rk      = method in ("regression_kriging",)
+
+            if needs_gam:
                 sdm_fit_message.set("⏳ Fitting GAM…")
                 gam_model = eva_sdm.fit_gam(X, y, response_type, n_splines=gam_splines)
 
-            # 3b. Fit IDW
-            if method in ("idw", "ensemble"):
+            if needs_idw:
                 sdm_fit_message.set("⏳ Fitting IDW…")
                 idw_model = eva_sdm.fit_idw(
                     sites_with_cov, response_col,
                     power=idw_power, lat_col=lat_col, lon_col=lon_col
                 )
 
+            if needs_kriging:
+                sdm_fit_message.set(f"⏳ Fitting Ordinary Kriging ({variogram_model})…")
+                kriging_model = eva_sdm.fit_kriging(
+                    sites_with_cov, response_col,
+                    variogram_model=variogram_model,
+                    lat_col=lat_col, lon_col=lon_col,
+                )
+
+            if needs_rf:
+                sdm_fit_message.set(f"⏳ Fitting Random Forest ({rf_trees} trees)…")
+                rf_model = eva_sdm.fit_random_forest(
+                    X, y, response_type=response_type, n_estimators=rf_trees
+                )
+
+            if needs_gp:
+                n_gp = len(y)
+                if n_gp > 2000:
+                    sdm_fit_message.set(
+                        f"⏳ Fitting Gaussian Process ({n_gp} pts — may take a few minutes)…"
+                    )
+                else:
+                    sdm_fit_message.set("⏳ Fitting Gaussian Process…")
+                gp_model = eva_sdm.fit_gaussian_process(X, y, response_type=response_type)
+
+            if needs_rk:
+                sdm_fit_message.set(f"⏳ Fitting Regression Kriging (RF + {variogram_model} OK)…")
+                rk_model = eva_sdm.fit_regression_kriging(
+                    X, y, sites_with_cov, variogram_model=variogram_model,
+                    n_estimators=rf_trees, lat_col=lat_col, lon_col=lon_col,
+                )
+
             # 4. Predict for all grid cells
             sdm_fit_message.set("⏳ Predicting distribution over grid…")
-            predictions = eva_sdm.predict_grid(
+            # ensemble weights: equal for included models
+            ens_weights = None
+            if method == "ensemble":
+                ens_weights = {}
+                if gam_model:     ens_weights["gam"]     = ens_weight
+                if idw_model:     ens_weights["idw"]     = (1.0 - ens_weight) * 0.5
+                if kriging_model: ens_weights["kriging"] = (1.0 - ens_weight) * 0.5
+                if rf_model:      ens_weights["rf"]      = (1.0 - ens_weight) * 0.5
+
+            predictions, uncertainty = eva_sdm.predict_grid(
                 cov, predictor_cols_available,
                 gam_model=gam_model, idw_model=idw_model,
+                kriging_model=kriging_model, rf_model=rf_model,
+                gp_model=gp_model, rk_model=rk_model,
                 method=method,
-                ensemble_weight_gam=ens_weight,
+                ensemble_weights=ens_weights,
                 response_type=response_type,
                 lat_col=lat_col, lon_col=lon_col,
             )
 
-            # 5. Diagnostics — use in-sample predictions at sites
-            if gam_model is not None:
-                y_pred_sites = gam_model.predict(X)
-            else:
+            # 5. Diagnostics — in-sample predictions at sites
+            primary = gam_model or rf_model or gp_model
+            if primary is not None:
+                if gp_model is not None:
+                    from sklearn.preprocessing import StandardScaler
+                    scaler = getattr(gp_model, "_eva_scaler", None)
+                    Xs = scaler.transform(X) if scaler else X
+                    y_pred_sites = gp_model.predict(Xs)
+                elif rf_model is not None:
+                    from sklearn.ensemble import RandomForestClassifier
+                    if isinstance(rf_model, RandomForestClassifier):
+                        y_pred_sites = rf_model.predict_proba(X)[:, 1]
+                    else:
+                        y_pred_sites = rf_model.predict(X)
+                else:
+                    import warnings as _w
+                    with _w.catch_warnings():
+                        _w.simplefilter("ignore")
+                        y_pred_sites = gam_model.predict(X)
+            elif idw_model is not None:
                 site_c = eva_sdm._sites_to_metric(sites_with_cov, lat_col, lon_col)
                 y_pred_sites = idw_model.predict(site_c)
+            elif kriging_model is not None:
+                site_c = eva_sdm._sites_to_metric(sites_with_cov, lat_col, lon_col)
+                import warnings as _w
+                with _w.catch_warnings():
+                    _w.simplefilter("ignore")
+                    zk, _ = kriging_model.execute("points", site_c[:, 0], site_c[:, 1])
+                y_pred_sites = zk.data
+            else:
+                y_pred_sites = predictions.reindex(range(len(y))).values
 
-            diag = eva_sdm.model_diagnostics(y, y_pred_sites, response_type,
-                                              feat_names, gam_model)
+            diag = eva_sdm.model_diagnostics(
+                y, y_pred_sites, response_type, feat_names,
+                gam_model=gam_model, rf_model=rf_model,
+            )
 
             sdm_results.set({
-                "gam_model":    gam_model,
-                "idw_model":    idw_model,
-                "predictions":  predictions,
-                "diagnostics":  diag,
-                "feat_names":   feat_names,
-                "response_col": response_col,
-                "method":       method,
-                "n_sites":      len(y),
+                "gam_model":      gam_model,
+                "idw_model":      idw_model,
+                "kriging_model":  kriging_model,
+                "rf_model":       rf_model,
+                "gp_model":       gp_model,
+                "rk_model":       rk_model,
+                "predictions":    predictions,
+                "uncertainty":    uncertainty,
+                "diagnostics":    diag,
+                "feat_names":     feat_names,
+                "response_col":   response_col,
+                "method":         method,
+                "n_sites":        len(y),
             })
             sdm_fit_message.set(f"✅ Done — {len(y)} sites, {len(cov)} grid cells predicted.")
 
         except Exception as e:
+            import traceback
             sdm_fit_message.set(f"❌ Error: {e}")
+            logger.error("SDM fit error: %s", traceback.format_exc())
 
     @output
     @render.ui
@@ -3075,7 +3158,14 @@ def server(input, output, session):
             return ui.p("Run 'Fit & Predict' to see model diagnostics.", style="color:#999;")
 
         diag_html = eva_sdm.format_diagnostics_html(res["diagnostics"], res["feat_names"])
-        method_labels = {"gam": "GAM", "idw": "IDW", "ensemble": "Ensemble (GAM + IDW)"}
+        method_labels = {
+            "gam": "GAM", "idw": "IDW",
+            "kriging": "Ordinary Kriging",
+            "rf": "Random Forest",
+            "gp": "Gaussian Process",
+            "regression_kriging": "Regression Kriging (RF + OK)",
+            "ensemble": "Ensemble",
+        }
 
         summary = ui.div(
             ui.h5(f"Model: {method_labels.get(res['method'], res['method'])}",
@@ -3085,6 +3175,85 @@ def server(input, output, session):
             ui.HTML(diag_html),
         )
         return summary
+
+    # ── SDM: uncertainty map ──────────────────────────────────────────────────
+
+    @output
+    @render.ui
+    def sdm_uncertainty_map_output():
+        import folium, branca.colormap as cm
+        res = sdm_results.get()
+        cov = sdm_covariates.get()
+
+        if res is None or cov is None:
+            return ui.p("Run 'Fit & Predict' using a Kriging or Gaussian Process method to see the uncertainty map.",
+                        style="color:#999;padding:1rem;")
+
+        uncertainty = res.get("uncertainty")
+        if uncertainty is None:
+            return ui.p("Uncertainty is only available for Kriging (variance) and Gaussian Process (std) methods.",
+                        style="color:#888;padding:1rem;")
+
+        plot_gdf = cov.copy()
+        plot_gdf["sdm_unc"] = uncertainty.values
+
+        center = [plot_gdf.geometry.centroid.y.mean(), plot_gdf.geometry.centroid.x.mean()]
+        m = folium.Map(location=center, zoom_start=7, tiles="CartoDB positron")
+        folium.plugins.Fullscreen(position="topright").add_to(m)
+
+        valid = plot_gdf["sdm_unc"].dropna()
+        vmin, vmax = float(valid.min()), float(valid.max())
+        colormap = cm.linear.PuBu_09.scale(vmin, vmax)
+        label = "Kriging variance" if res["method"] in ("kriging", "regression_kriging") else "GP std"
+        colormap.caption = label
+        colormap.add_to(m)
+
+        plot_gdf_4326 = plot_gdf.to_crs("EPSG:4326")
+
+        def style_unc(feature):
+            val = feature["properties"].get("sdm_unc")
+            try:
+                color = colormap(float(val)) if val is not None and not (val != val) else "#eeeeee"
+            except Exception:
+                color = "#eeeeee"
+            return {"fillColor": color, "fillOpacity": 0.75, "color": "none", "weight": 0}
+
+        folium.GeoJson(
+            plot_gdf_4326.__geo_interface__,
+            style_function=style_unc,
+            tooltip=folium.GeoJsonTooltip(
+                fields=["sdm_unc"],
+                aliases=[f"{label}:"],
+                localize=True,
+            ),
+            name="Prediction uncertainty",
+        ).add_to(m)
+
+        folium.LayerControl().add_to(m)
+        return ui.HTML(m._repr_html_())
+
+    # ── SDM: variogram ────────────────────────────────────────────────────────
+
+    @output
+    @render.ui
+    def sdm_variogram_output():
+        res = sdm_results.get()
+        if res is None:
+            return ui.p("Run a Kriging-based method to see the variogram.", style="color:#999;")
+
+        km = res.get("kriging_model")
+        if km is None:
+            rk = res.get("rk_model")
+            if rk is not None:
+                km = getattr(rk, "ok_", None)  # pykrige RK exposes underlying OK
+        if km is None:
+            return ui.p("Variogram is only available for Ordinary Kriging and Regression Kriging methods.",
+                        style="color:#888;")
+        try:
+            html = eva_sdm.plot_variogram_html(km, title="Variogram")
+            return ui.HTML(html)
+        except Exception as e:
+            return ui.p(f"Could not render variogram: {e}", style="color:#c00;")
 
     @output
     @render.ui

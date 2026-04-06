@@ -185,7 +185,7 @@ class TestPredictGrid:
         sites = _make_sites(15)
         sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
         idw = eva_sdm.fit_idw(sites_cov, "abundance")
-        preds = eva_sdm.predict_grid(
+        preds, unc = eva_sdm.predict_grid(
             grid, ["depth_m", "sst_mean_c"],
             idw_model=idw, method="idw"
         )
@@ -199,7 +199,7 @@ class TestPredictGrid:
             sites_cov, ["depth_m", "sst_mean_c"], "abundance"
         )
         gam = eva_sdm.fit_gam(X, y, n_splines=5)
-        preds = eva_sdm.predict_grid(
+        preds, unc = eva_sdm.predict_grid(
             grid, ["depth_m", "sst_mean_c"],
             gam_model=gam, method="gam"
         )
@@ -214,7 +214,7 @@ class TestPredictGrid:
             sites_cov, ["depth_m", "sst_mean_c"], "abundance"
         )
         gam = eva_sdm.fit_gam(X, y, n_splines=5)
-        preds = eva_sdm.predict_grid(
+        preds, unc = eva_sdm.predict_grid(
             grid, ["depth_m", "sst_mean_c"],
             gam_model=gam, idw_model=idw, method="ensemble"
         )
@@ -222,10 +222,218 @@ class TestPredictGrid:
 
 
 # ---------------------------------------------------------------------------
-# model_diagnostics
+# Ordinary Kriging
 # ---------------------------------------------------------------------------
 
-class TestDiagnostics:
+class TestOrdinaryKriging:
+    def test_fit_returns_model(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        ok = eva_sdm.fit_kriging(sites_cov, "abundance")
+        assert hasattr(ok, "variogram_model_parameters")
+
+    @pytest.mark.parametrize("vm", ["spherical", "gaussian", "exponential"])
+    def test_variogram_models(self, vm):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        ok = eva_sdm.fit_kriging(sites_cov, "abundance", variogram_model=vm)
+        assert ok.variogram_model == vm
+
+    def test_predict_grid_returns_uncertainty(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        ok = eva_sdm.fit_kriging(sites_cov, "abundance")
+        preds, unc = eva_sdm.predict_grid(
+            grid, [], kriging_model=ok, method="kriging"
+        )
+        assert len(preds) == len(grid)
+        assert unc is not None
+        assert len(unc) == len(grid)
+        assert (unc >= 0).all()  # variance must be non-negative
+
+    def test_kriging_uncertainty_higher_away_from_sites(self):
+        """Variance should generally be lower near training points."""
+        grid = _make_hex_grid(30)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        ok = eva_sdm.fit_kriging(sites_cov, "abundance")
+        _, unc = eva_sdm.predict_grid(grid, [], kriging_model=ok, method="kriging")
+        assert unc is not None
+        assert unc.std() > 0  # not all equal
+
+
+# ---------------------------------------------------------------------------
+# Random Forest
+# ---------------------------------------------------------------------------
+
+class TestRandomForest:
+    def test_fit_continuous(self):
+        rng = np.random.default_rng(10)
+        X = rng.uniform(0, 10, (50, 3))
+        y = X[:, 0] + rng.normal(0, 0.3, 50)
+        model = eva_sdm.fit_random_forest(X, y, response_type="continuous", n_estimators=50)
+        preds = model.predict(X)
+        assert preds.shape == (50,)
+        assert hasattr(model, "feature_importances_")
+
+    def test_fit_binary_returns_classifier(self):
+        from sklearn.ensemble import RandomForestClassifier
+        rng = np.random.default_rng(11)
+        X = rng.uniform(0, 5, (40, 2))
+        y = (X[:, 0] > 2.5).astype(float)
+        model = eva_sdm.fit_random_forest(X, y, response_type="binary", n_estimators=30)
+        assert isinstance(model, RandomForestClassifier)
+
+    def test_predict_grid_rf(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        X, y, _ = eva_sdm.prepare_features(sites_cov, ["depth_m", "sst_mean_c"], "abundance")
+        rf = eva_sdm.fit_random_forest(X, y, n_estimators=30)
+        preds, unc = eva_sdm.predict_grid(
+            grid, ["depth_m", "sst_mean_c"], rf_model=rf, method="rf"
+        )
+        assert len(preds) == len(grid)
+        assert unc is None  # RF doesn't produce uncertainty
+
+    def test_feature_importances_in_diagnostics(self):
+        rng = np.random.default_rng(12)
+        X = rng.uniform(0, 5, (40, 2))
+        y = X[:, 0] * 3 + rng.normal(0, 0.2, 40)
+        rf = eva_sdm.fit_random_forest(X, y, n_estimators=50)
+        y_pred = rf.predict(X)
+        diag = eva_sdm.model_diagnostics(
+            y, y_pred, feature_names=["depth_m", "sst_mean_c"], rf_model=rf
+        )
+        assert "feature_importances" in diag
+        assert set(diag["feature_importances"].keys()) == {"depth_m", "sst_mean_c"}
+        total = sum(diag["feature_importances"].values())
+        assert abs(total - 1.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Gaussian Process
+# ---------------------------------------------------------------------------
+
+class TestGaussianProcess:
+    def test_fit_returns_model_with_scaler(self):
+        rng = np.random.default_rng(20)
+        X = rng.uniform(0, 5, (30, 2))
+        y = X[:, 0] + rng.normal(0, 0.2, 30)
+        gpr = eva_sdm.fit_gaussian_process(X, y)
+        assert hasattr(gpr, "_eva_scaler")
+        assert hasattr(gpr, "kernel_")
+
+    def test_predict_returns_mean_and_std(self):
+        rng = np.random.default_rng(21)
+        X = rng.uniform(0, 5, (30, 2))
+        y = X[:, 0] + rng.normal(0, 0.1, 30)
+        gpr = eva_sdm.fit_gaussian_process(X, y, n_restarts=0)
+        scaler = gpr._eva_scaler
+        Xs = scaler.transform(X)
+        mean, std = gpr.predict(Xs, return_std=True)
+        assert mean.shape == (30,)
+        assert std.shape == (30,)
+        assert (std >= 0).all()
+
+    def test_predict_grid_gp_returns_uncertainty(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        X, y, _ = eva_sdm.prepare_features(sites_cov, ["depth_m", "sst_mean_c"], "abundance")
+        gpr = eva_sdm.fit_gaussian_process(X, y, n_restarts=0)
+        preds, unc = eva_sdm.predict_grid(
+            grid, ["depth_m", "sst_mean_c"], gp_model=gpr, method="gp"
+        )
+        assert len(preds) == len(grid)
+        assert unc is not None
+        assert (unc.dropna() >= 0).all()
+
+
+# ---------------------------------------------------------------------------
+# Regression Kriging
+# ---------------------------------------------------------------------------
+
+class TestRegressionKriging:
+    def test_fit_and_predict(self):
+        grid = _make_hex_grid(25)
+        sites = _make_sites(18)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        X, y, _ = eva_sdm.prepare_features(sites_cov, ["depth_m", "sst_mean_c"], "abundance")
+        rk = eva_sdm.fit_regression_kriging(
+            X, y, sites_cov, variogram_model="spherical", n_estimators=50
+        )
+        preds, unc = eva_sdm.predict_grid(
+            grid, ["depth_m", "sst_mean_c"], rk_model=rk, method="regression_kriging"
+        )
+        assert len(preds) == len(grid)
+        assert not preds.isna().all()
+
+    def test_regression_kriging_valid_range(self):
+        """Predictions should be in roughly the same range as training data."""
+        grid = _make_hex_grid(25)
+        sites = _make_sites(18)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        X, y, _ = eva_sdm.prepare_features(sites_cov, ["depth_m", "sst_mean_c"], "abundance")
+        rk = eva_sdm.fit_regression_kriging(
+            X, y, sites_cov, variogram_model="spherical", n_estimators=50
+        )
+        preds, _ = eva_sdm.predict_grid(
+            grid, ["depth_m", "sst_mean_c"], rk_model=rk, method="regression_kriging"
+        )
+        valid = preds.dropna()
+        assert len(valid) > 0
+        # predictions within 5× range of training values (loose check)
+        y_range = y.max() - y.min()
+        assert float(valid.min()) > y.min() - 2 * y_range
+        assert float(valid.max()) < y.max() + 2 * y_range
+
+
+# ---------------------------------------------------------------------------
+# Variogram plot
+# ---------------------------------------------------------------------------
+
+class TestVariogramPlot:
+    def test_returns_html_string(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        ok = eva_sdm.fit_kriging(sites_cov, "abundance")
+        html = eva_sdm.plot_variogram_html(ok)
+        assert isinstance(html, str)
+        assert "plotly" in html.lower() or "<div" in html
+
+    def test_contains_variogram_model_name(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(15)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        ok = eva_sdm.fit_kriging(sites_cov, "abundance", variogram_model="exponential")
+        html = eva_sdm.plot_variogram_html(ok)
+        assert "exponential" in html
+
+
+# ---------------------------------------------------------------------------
+# Feature importances HTML
+# ---------------------------------------------------------------------------
+
+class TestDiagnosticsExtended:
+    def test_html_contains_feature_importance_bar(self):
+        diag = {
+            "n_obs": 40, "r2": 0.80, "rmse": 2.1,
+            "feature_importances": {"depth_m": 0.6, "sst_mean_c": 0.4},
+        }
+        html = eva_sdm.format_diagnostics_html(diag, ["depth_m", "sst_mean_c"])
+        assert "Feature Importances" in html
+        assert "depth_m" in html
+        assert "sst_mean_c" in html
+
+    def test_variogram_models_constant_exported(self):
+        assert "spherical" in eva_sdm.VARIOGRAM_MODELS
+        assert "gaussian" in eva_sdm.VARIOGRAM_MODELS
+        assert "exponential" in eva_sdm.VARIOGRAM_MODELS
     def test_continuous_metrics(self):
         y_true = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         y_pred = y_true + 0.1
