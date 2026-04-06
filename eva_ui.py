@@ -817,8 +817,16 @@ app_ui = ui.page_fluid(
             <p><strong>MARBEFES EVA</strong> is an open-source tool for Ecological Value Assessment of marine areas, developed within the <strong>MARBEFES</strong> Horizon Europe project (Grant No. 101059877).</p>
             <p>It combines species occurrence data with environmental covariates (bathymetry, EUNIS habitat classification, Copernicus Marine physical and biogeochemical variables) on a hexagonal grid to produce spatially explicit ecological value scores and habitat physical accounts.</p>
             <hr>
-            <p><strong>Developed by:</strong><br>Institute of Ecoscience &amp; Earth Sciences (IECS), Klaipėda University</p>
-            <p><strong>Contact:</strong><br>arturas.razinkovas-baziukas@ku.lt</p>
+            <p><strong>Developed by:</strong></p>
+            <p style="margin-bottom:4px;">
+              Marine Research Institute, Klaipėda University<br>
+              <a href="mailto:arturas.razinkovas-baziukas@ku.lt">arturas.razinkovas-baziukas@ku.lt</a>
+            </p>
+            <p style="margin-bottom:4px;">
+              International Estuarine &amp; Coastal Specialists Ltd. (IECS)<br>
+              Anita Franco, PhD AFHEA — Director<br>
+              <a href="mailto:Anita.Franco@iecs.ltd">Anita.Franco@iecs.ltd</a>
+            </p>
             <p><strong>Source code:</strong><br><a href="https://github.com/razinkele/EVA-Algorithms" target="_blank">github.com/razinkele/EVA-Algorithms</a></p>
             <hr>
             <p style="font-size:0.8rem; color:#666;">MARBEFES is funded by the European Union under Horizon Europe. Views and opinions expressed are those of the authors only and do not necessarily reflect those of the European Union.</p>
