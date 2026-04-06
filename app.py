@@ -20,6 +20,8 @@ from html import escape as html_escape
 import eva_calculations
 import eva_export
 import eunis_data
+import folium
+import folium.plugins
 import pa_config
 import pa_calculations
 import pa_export
@@ -393,8 +395,6 @@ def server(input, output, session):
     @output
     @render.ui
     def draw_map_output():
-        import folium
-        import folium.plugins
         from branca.element import MacroElement, Template
         m = folium.Map(location=[55.7, 21.1], zoom_start=10, tiles="OpenStreetMap")
         # Create the draw feature group and draw control
@@ -542,7 +542,6 @@ def server(input, output, session):
         boundary = boundary_polygon.get()
         if grid is None and boundary is None:
             return ui.HTML("")
-        import folium
         # Determine map center from boundary or grid
         gdf_for_bounds = grid if grid is not None else boundary
         bounds = gdf_for_bounds.total_bounds
@@ -596,6 +595,20 @@ def server(input, output, session):
         geo_data.set(grid[["Subzone ID", "geometry"]])
         geo_data_full.set(grid.copy())
         original_crs.set("EPSG:4326 (WGS84)")
+        # Update match info if CSV data is already loaded
+        csv_df = uploaded_data.get()
+        if csv_df is not None:
+            csv_ids = set(csv_df["Subzone ID"].astype(str).str.strip())
+            geo_ids = set(grid["Subzone ID"])
+            matched = csv_ids & geo_ids
+            geo_match_info.set({
+                'total_features': len(grid),
+                'matched': len(matched),
+                'csv_only': len(csv_ids - geo_ids),
+                'geo_only': len(geo_ids - csv_ids),
+                'csv_only_ids': sorted(list(csv_ids - geo_ids))[:20],
+                'geo_only_ids': sorted(list(geo_ids - csv_ids))[:20],
+            })
         ui.notification_show(
             f"Grid with {len(grid)} cells loaded into pipeline. Proceed to Data Input.",
             type="message", duration=5,
