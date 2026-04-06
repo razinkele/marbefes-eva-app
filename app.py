@@ -406,66 +406,112 @@ def server(input, output, session):
 
     @output
     @render.ui
-    def draw_map_output():
-        m = folium.Map(location=[55.7, 21.1], zoom_start=10, tiles="OpenStreetMap")
-        # Create the draw feature group and draw control
-        draw_fg = folium.FeatureGroup(name="drawn_items")
-        draw_fg.add_to(m)
-        draw = folium.plugins.Draw(
-            draw_options={
-                "polyline": False,
-                "rectangle": True,
-                "polygon": True,
-                "circle": False,
-                "marker": False,
-                "circlemarker": False,
-            },
-            edit_options={"edit": True, "remove": True, "featureGroup": "placeholder"},
-        )
-        draw.add_to(m)
-        # Inject JS into the Folium map to capture drawn shapes and post to parent
-        js_bridge = MacroElement()
-        js_bridge._template = Template("""
-            {% macro script(this, kwargs) %}
-            (function(){
-                var map = {{ this._parent.get_name() }};
-                var drawnItems = new L.FeatureGroup();
-                map.addLayer(drawnItems);
+    def unified_map_output():
+        boundary = boundary_polygon.get()
+        grid = generated_grid.get()
+        polygon_source = input.polygon_source()
 
-                // Override the draw control's featureGroup
-                map.eachLayer(function(layer) {
-                    if (layer.options && layer.options.draw) {
-                        layer.options.edit = layer.options.edit || {};
-                        layer.options.edit.featureGroup = drawnItems;
-                    }
-                });
+        # Determine map center/zoom
+        if boundary is not None:
+            bounds = boundary.total_bounds
+        elif grid is not None:
+            bounds = grid.total_bounds
+        else:
+            bounds = None
 
-                map.on(L.Draw.Event.CREATED, function(e) {
-                    drawnItems.addLayer(e.layer);
-                    var geojson = JSON.stringify(drawnItems.toGeoJSON());
-                    // Post to parent Shiny app (Folium renders in an iframe)
-                    if (window.parent && window.parent.Shiny) {
-                        window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
-                    }
-                });
-                map.on(L.Draw.Event.EDITED, function(e) {
-                    var geojson = JSON.stringify(drawnItems.toGeoJSON());
-                    if (window.parent && window.parent.Shiny) {
-                        window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
-                    }
-                });
-                map.on(L.Draw.Event.DELETED, function(e) {
-                    var geojson = JSON.stringify(drawnItems.toGeoJSON());
-                    if (window.parent && window.parent.Shiny) {
-                        window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
-                    }
-                });
-            })();
-            {% endmacro %}
-        """)
-        js_bridge.add_to(m)
-        map_html = m._repr_html_()
-        return ui.HTML(f'<div style="height: 500px;">{map_html}</div>')
+        if bounds is not None:
+            center_lat = (bounds[1] + bounds[3]) / 2
+            center_lng = (bounds[0] + bounds[2]) / 2
+            zoom = eva_map.auto_zoom_level(bounds)
+        else:
+            center_lat, center_lng, zoom = 55.7, 21.1, 10
+
+        m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles="OpenStreetMap")
+
+        # Draw tools (always added; user activates via sidebar radio)
+        if polygon_source == "draw":
+            draw_fg = folium.FeatureGroup(name="drawn_items")
+            draw_fg.add_to(m)
+            draw = folium.plugins.Draw(
+                draw_options={
+                    "polyline": False,
+                    "rectangle": True,
+                    "polygon": True,
+                    "circle": False,
+                    "marker": False,
+                    "circlemarker": False,
+                },
+                edit_options={"edit": True, "remove": True, "featureGroup": "placeholder"},
+            )
+            draw.add_to(m)
+            js_bridge = MacroElement()
+            js_bridge._template = Template("""
+                {% macro script(this, kwargs) %}
+                (function(){
+                    var map = {{ this._parent.get_name() }};
+                    var drawnItems = new L.FeatureGroup();
+                    map.addLayer(drawnItems);
+
+                    map.eachLayer(function(layer) {
+                        if (layer.options && layer.options.draw) {
+                            layer.options.edit = layer.options.edit || {};
+                            layer.options.edit.featureGroup = drawnItems;
+                        }
+                    });
+
+                    map.on(L.Draw.Event.CREATED, function(e) {
+                        drawnItems.addLayer(e.layer);
+                        var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                        if (window.parent && window.parent.Shiny) {
+                            window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                        }
+                    });
+                    map.on(L.Draw.Event.EDITED, function(e) {
+                        var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                        if (window.parent && window.parent.Shiny) {
+                            window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                        }
+                    });
+                    map.on(L.Draw.Event.DELETED, function(e) {
+                        var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                        if (window.parent && window.parent.Shiny) {
+                            window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                        }
+                    });
+                })();
+                {% endmacro %}
+            """)
+            js_bridge.add_to(m)
+
+        # Boundary overlay
+        if boundary is not None:
+            folium.GeoJson(
+                boundary.__geo_interface__,
+                style_function=lambda x: {
+                    "fillColor": "transparent",
+                    "color": "#ff6600",
+                    "weight": 3,
+                    "dashArray": "5 5",
+                },
+                name="Boundary",
+            ).add_to(m)
+
+        # Grid overlay
+        if grid is not None:
+            folium.GeoJson(
+                grid.to_json(),
+                style_function=lambda x: {
+                    "fillColor": "#4da6ff",
+                    "color": "#006994",
+                    "weight": 1,
+                    "fillOpacity": 0.3,
+                },
+                tooltip=folium.GeoJsonTooltip(fields=["Subzone ID"]),
+                name="Hex Grid",
+            ).add_to(m)
+
+        folium.LayerControl().add_to(m)
+        return ui.HTML(f'<div style="height: 650px;">{m._repr_html_()}</div>')
 
     @reactive.Effect
     @reactive.event(input.drawn_polygon)
@@ -533,7 +579,7 @@ def server(input, output, session):
                 'csv_only_ids': sorted(list(csv_ids - geo_ids))[:20],
                 'geo_only_ids': sorted(list(geo_ids - csv_ids))[:20],
             })
-        ui.notification_show(f"Grid generated: {len(grid)} hexagonal cells — visible on Map tab", type="message", duration=5)
+        ui.notification_show(f"Grid generated: {len(grid)} hexagonal cells{clip_note}", type="message", duration=5)
 
     @output
     @render.ui
@@ -545,7 +591,7 @@ def server(input, output, session):
             parts.append(f"Boundary: {len(boundary)} polygon(s)")
         if grid is not None:
             preset_key = input.hex_preset()
-            preset = HEX_PRESETS.get(preset_key, HEX_PRESETS["medium"])
+            preset = HEX_PRESETS.get(preset_key, HEX_PRESETS["mobile"])
             total_area_km2 = len(grid) * preset["area_km2"]
             parts.append(f"Grid: {len(grid)} cells, ~{total_area_km2:.1f} km²")
         if not parts:
@@ -555,48 +601,6 @@ def server(input, output, session):
             *[ui.p(p, style="margin: 0.3rem 0; font-weight: 500;") for p in parts],
             style="padding: 0.5rem; background: #e8f5e9; border-radius: 6px; margin-bottom: 1rem;",
         )
-
-    @output
-    @render.ui
-    def grid_preview_map_output():
-        grid = generated_grid.get()
-        boundary = boundary_polygon.get()
-        if grid is None and boundary is None:
-            return ui.HTML("")
-        # Determine map center from boundary or grid
-        gdf_for_bounds = grid if grid is not None else boundary
-        bounds = gdf_for_bounds.total_bounds
-        center_lat = (bounds[1] + bounds[3]) / 2
-        center_lng = (bounds[0] + bounds[2]) / 2
-        zoom = eva_map.auto_zoom_level(bounds)
-        m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles="OpenStreetMap")
-        # Show boundary
-        if boundary is not None:
-            folium.GeoJson(
-                boundary.__geo_interface__,
-                style_function=lambda x: {
-                    "fillColor": "transparent",
-                    "color": "#ff6600",
-                    "weight": 3,
-                    "dashArray": "5 5",
-                },
-                name="Boundary",
-            ).add_to(m)
-        # Show hex grid
-        if grid is not None:
-            folium.GeoJson(
-                grid.to_json(),
-                style_function=lambda x: {
-                    "fillColor": "#4da6ff",
-                    "color": "#006994",
-                    "weight": 1,
-                    "fillOpacity": 0.3,
-                },
-                tooltip=folium.GeoJsonTooltip(fields=["Subzone ID"]),
-                name="Hex Grid",
-            ).add_to(m)
-        folium.LayerControl().add_to(m)
-        return ui.HTML(f'<div style="height: 600px;">{m._repr_html_()}</div>')
 
     @render.download(filename="hex_grid.geojson")
     def download_grid():

@@ -519,7 +519,11 @@ app_ui = ui.page_navbar(
                         "hex_preset",
                         "Hexagon size:",
                         choices={k: v["label"] for k, v in HEX_PRESETS.items()},
-                        selected="medium",
+                        selected="mobile",
+                    ),
+                    ui.p(
+                        "📖 Guidance (Table 2.1): ~250 m for benthic ECs; ~3 km for mobile ECs (seabirds, fish, mammals, plankton).",
+                        style="font-size: 0.8rem; color: #6c757d; margin-top: 0.4rem;",
                     ),
                 ),
                 ui.hr(),
@@ -547,24 +551,8 @@ app_ui = ui.page_navbar(
                 width=380,
             ),
             ui.div(
-                ui.panel_conditional(
-                    "input.polygon_source === 'draw'",
-                    ui.card(
-                        ui.card_header("🗺️ Draw Study Area"),
-                        ui.div(
-                            ui.output_ui("draw_map_output"),
-                            style="padding: 1rem;",
-                        ),
-                    ),
-                ),
-                ui.card(
-                    ui.card_header("🔷 Grid Preview"),
-                    ui.div(
-                        ui.output_ui("grid_status_output"),
-                        ui.output_ui("grid_preview_map_output"),
-                        style="padding: 1rem;",
-                    ),
-                ),
+                ui.output_ui("grid_status_output"),
+                ui.output_ui("unified_map_output"),
                 class_="main-content",
             ),
         ),

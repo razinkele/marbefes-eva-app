@@ -263,8 +263,13 @@ EXPORT_MULTI_EC_TAB_COLOR = '6F42C1'
 EXPORT_CHART_TAB_COLOR = 'FD7E14'
 
 # H3 hexagonal grid resolution presets
+# Labels align with MARBEFES EVA Guidance Table 2.1:
+#   250 m → benthic ECs (macrobenthos, epibenthos, benthic habitats)
+#   3 km  → mobile ECs (seabirds, fish, marine mammals, plankton)
+# H3 "size" = inner diameter (2 × apothem, per FAQ clarification in guidance)
 HEX_PRESETS = {
-    "small":  {"label": "Small (~174m edge, ~0.1 km²)",  "resolution": 9, "area_km2": 0.105},
-    "medium": {"label": "Medium (~461m edge, ~0.7 km²)", "resolution": 8, "area_km2": 0.737},
-    "large":  {"label": "Large (~1.2km edge, ~5.2 km²)", "resolution": 7, "area_km2": 5.161},
+    "benthic":  {"label": "Benthic ECs – ~300 m  (res 9, ~0.1 km²) ≈ 250 m guidance",  "resolution": 9, "area_km2": 0.105},
+    "small":    {"label": "Small – ~800 m  (res 8, ~0.7 km²)",                           "resolution": 8, "area_km2": 0.737},
+    "mobile":   {"label": "Mobile ECs – ~2 km  (res 7, ~5.2 km²) ≈ 3 km guidance",      "resolution": 7, "area_km2": 5.161},
+    "coarse":   {"label": "Coarse – ~6 km  (res 6, ~36 km²)",                            "resolution": 6, "area_km2": 36.129},
 }
