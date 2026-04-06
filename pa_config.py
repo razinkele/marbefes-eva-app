@@ -192,6 +192,28 @@ HABITAT_PALETTE = [
 ]
 
 # ---------------------------------------------------------------------------
+# EUNIS codes indicating habitat-forming species / biogenic habitats
+# Used to auto-suggest HFS/BH classification when EUNIS overlay is loaded
+# ---------------------------------------------------------------------------
+EUNIS_HFS_BH_CODES = {
+    # EUNIS 2007/2012 format codes (typical EUSeaMap / older datasets)
+    "A3.4", "A3.5", "A3.6",      # Baltic infralittoral rock (biogenic reef substrate)
+    "A4.4",                        # Baltic circalittoral rock
+    "A5.53",                       # Posidonia oceanica meadows
+    "A5.62",                       # Sabellaria reefs
+    "A4.26",                       # Cold-water coral communities
+    # EUNIS 2022 format codes (newer datasets may use these)
+    "MB25", "MB252",               # Seagrass beds / Posidonia
+    "MC35", "MC352", "MC3521",     # Circalittoral biogenic reefs
+    "MC3517",                      # Eunicella / gorgonian gardens
+}
+
+# EUNIS codes indicating ecologically significant features
+EUNIS_ESF_CODES = {
+    "MB252",                       # Posidonia meadows (keystone habitat)
+}
+
+# ---------------------------------------------------------------------------
 # TODO stubs — reserved for future expansion
 # ---------------------------------------------------------------------------
 # DEFAULT_SECTORS  — economic sector classification for monetary accounts

@@ -3,6 +3,66 @@
 All notable changes to the MARBEFES EVA application are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.5.1] - 2026-03-18 "Test Hardening"
+
+### Added
+- 150 tests total — expanded pa_export coverage and math verification tests
+- Comprehensive edge-case tests for NaN rescaling and constant-value columns
+
+### Fixed
+- Minor test stability improvements across all test modules
+
+## [3.5.0] - 2026-03-18 "Deep EUNIS"
+
+### Added
+- **HFS/BH auto-classification** — EUNIS codes automatically mapped to habitat-forming species / biogenic habitat roles
+- **EUNIS-aware export** — "EV by Habitat Type" sheet included in Excel export when EUNIS overlay is loaded
+- **EUNIS habitat base layer toggle** on the Map tab — display EUNIS habitat polygons underneath EVA results
+- BBT8 export button for EUNIS-level physical accounts
+
+## [3.4.1] - 2026-03-18
+
+### Fixed
+- **Critical:** Total EV export used SUM aggregation instead of MAX — now correctly uses MAX
+- **Critical:** Constant-value columns caused division-by-zero in rescaling — now handled gracefully
+- **Critical:** State leak between ECs when switching — reactive values properly isolated
+- Removed hardcoded data path — replaced with `MARBEFES_EVA_DATA_PATH` environment variable
+
+## [3.4.0] - 2026-03-18 "EUNIS L3 Integration"
+
+### Added
+- **EUNIS L3 overlay upload** — upload a GeoPackage/GeoJSON with EUSeaMap habitat polygons
+- Spatial overlay intersects EUNIS polygons with grid cells, assigns dominant habitat per subzone
+- **BBT8 physical accounts export** — EUNIS-aware extent and supply tables
+
+## [3.3.1] - 2026-03-18 "Tutorial"
+
+### Added
+- **Tutorial dataset** — 5 EC datasets (benthos, fish, habitats, zooplankton, phytoplankton) + spatial grid
+- `tutorial/README.txt` with data provenance and citations
+- `docs/TUTORIAL.md` — step-by-step walkthrough (~30 min)
+- `eunis_l3_lithuanian.gpkg` tutorial file for EUNIS overlay demonstration
+
+## [3.3.0] - 2026-03-18 "Data Repair Pipeline"
+
+### Added
+- **6 data repair scripts** for cleaning and preparing EVA_FINAL input data
+- Automated detection and repair of common CSV issues (encoding, missing headers, duplicate rows)
+
+## [3.2.0] - 2026-03-17 "Hardening"
+
+### Fixed
+- **Security:** XSS sanitisation applied to all user-supplied strings rendered in HTML
+- NaN handling improvements across all AQ calculations
+- Exception handling tightened — broad `except Exception` replaced with specific types
+- Vectorized rescaling operations for improved performance
+
+## [3.1.0] - 2026-03-17 "Modularization"
+
+### Changed
+- Split monolithic `app.py` into focused modules: `eva_calculations.py`, `eva_export.py`, `eva_config.py`, `pa_calculations.py`, `pa_export.py`
+- Improved import structure and reduced circular dependencies
+
 ## [3.0.0] - 2026-03-16 "Physical Accounts"
 
 ### Added
@@ -16,7 +76,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **Centralized version management** (`version.py`) — single source of truth for all version info
 - **Comprehensive user manual** (`docs/USER_MANUAL.md`) linked from the app Help tab
 - **CHANGELOG.md** for tracking all releases
-- **Unit test suite** for PA calculations (14 tests)
+- **Unit test suite** — 150 tests covering EVA calculations, PA export, and math verification
 
 ### Fixed
 - **Critical:** AQ status mapping was wrong — AQ3/4 now correctly linked to RRF, AQ5/6 to NRF

@@ -19,6 +19,7 @@ import geopandas as gpd
 from html import escape as html_escape
 import eva_calculations
 import eva_export
+import eunis_data
 import pa_config
 import pa_calculations
 import pa_export
@@ -27,6 +28,8 @@ import eva_map
 import eva_hexgrid
 import dwca_reader
 from eva_ui import app_ui, get_aq_guide_html
+
+from version import get_version
 
 from eva_config import (
     MAX_FEATURES, PREVIEW_ROWS_LIMIT, RESULTS_DISPLAY_LIMIT, MAX_FILE_SIZE_MB,
@@ -135,9 +138,13 @@ def server(input, output, session):
         if file_info is not None and len(file_info) > 0:
             file_path = file_info[0]["datapath"]
 
-            # Reset stale validation report from previous upload
+            # Reset stale validation report and match info from previous upload
             validation_report.set(None)
             dwca_info.set(None)
+            geo_match_info.set(None)
+
+            # Use the original filename (not the server temp path) for type detection
+            original_name = file_info[0].get("name", "").lower()
 
             # Validate file size
             try:
@@ -153,10 +160,8 @@ def server(input, output, session):
                 ui.notification_show(f"Could not process uploaded file: {e}", type="error", duration=8)
                 return
 
-            # Check if this is a DwC-A zip
-            if file_path.endswith(".zip") or (
-                file_info[0].get("type", "") == "application/zip"
-            ):
+            # Check if this is a DwC-A zip (use original filename, not temp path)
+            if original_name.endswith(".zip"):
                 if dwca_reader.is_dwca_zip(file_path):
                     try:
                         summary = dwca_reader.get_dwca_summary(file_path)
@@ -181,6 +186,15 @@ def server(input, output, session):
                         type="error", duration=8,
                     )
                     return
+
+            # Reject non-CSV, non-ZIP files before attempting to parse
+            if not original_name.endswith(".csv"):
+                uploaded_data.set(None)
+                ui.notification_show(
+                    f"Unsupported file type. Please upload a CSV file or a DwC-A ZIP.",
+                    type="error", duration=8,
+                )
+                return
 
             # Read CSV and handle missing data
             try:
@@ -483,6 +497,20 @@ def server(input, output, session):
         geo_data.set(grid[["Subzone ID", "geometry"]])
         geo_data_full.set(grid.copy())
         original_crs.set("EPSG:4326 (WGS84)")
+        # Update match info if CSV data is already loaded
+        csv_df = uploaded_data.get()
+        if csv_df is not None:
+            csv_ids = set(csv_df["Subzone ID"].astype(str).str.strip())
+            geo_ids = set(grid["Subzone ID"])
+            matched = csv_ids & geo_ids
+            geo_match_info.set({
+                'total_features': len(grid),
+                'matched': len(matched),
+                'csv_only': len(csv_ids - geo_ids),
+                'geo_only': len(geo_ids - csv_ids),
+                'csv_only_ids': sorted(list(csv_ids - geo_ids))[:20],
+                'geo_only_ids': sorted(list(geo_ids - csv_ids))[:20],
+            })
         ui.notification_show(f"Grid generated: {len(grid)} hexagonal cells — visible on Map tab", type="message", duration=5)
 
     @output
@@ -961,7 +989,8 @@ def server(input, output, session):
             if combined:
                 new_classifications[feature] = combined
 
-        feature_classifications.set(new_classifications)
+        if new_classifications != feature_classifications.get():
+            feature_classifications.set(new_classifications)
 
     @reactive.Effect
     @reactive.event(input.reset_classifications)
@@ -1078,7 +1107,6 @@ def server(input, output, session):
 
             # Now concatenate with matching indices
             results = pd.concat([df_indexed, aq_results_indexed], axis=1).reset_index()
-            results.rename(columns={'index': 'Subzone ID'}, inplace=True)
 
             return results
         except (KeyError, ValueError, IndexError) as e:
@@ -1233,9 +1261,6 @@ def server(input, output, session):
         # Create display dataframe
         display_limit = int(input.results_display_limit())
         display_df = results[display_cols].head(display_limit).copy() if display_limit > 0 else results[display_cols].copy()
-
-        # Do NOT replace NaN values; keep them as NaN so we can display NA/empty in the table
-        # display_df = display_df.fillna(0)
 
         # Round numeric columns to 3 decimal places
         numeric_cols = display_df.select_dtypes(include=[np.number]).columns
@@ -1511,6 +1536,9 @@ def server(input, output, session):
         feature_classifications.set(ec['classifications'].copy())
         detected_data_type.set(ec['data_type'])
         current_ec.set(ec_name)
+        # Clear stale state from the previous EC
+        validation_report.set(None)
+        geo_match_info.set(None)
 
         # Update the data type dropdown to match
         ui.update_select("data_type", selected=ec['data_type'])
@@ -1525,6 +1553,9 @@ def server(input, output, session):
         uploaded_data.set(None)
         feature_classifications.set({})
         detected_data_type.set(None)
+        validation_report.set(None)
+        dwca_info.set(None)
+        geo_match_info.set(None)
         current_ec.set(None)
         ui.update_text("ec_name", value="")
         ui.update_select("data_type", selected="TO SPECIFY")
@@ -1589,7 +1620,7 @@ def server(input, output, session):
         )
 
     @reactive.Effect
-    @reactive.event(ec_store)
+    @reactive.event(ec_store, current_ec)
     def _update_ec_selector():
         store = ec_store.get()
         choices = [""] + list(store.keys())
@@ -1840,6 +1871,7 @@ def server(input, output, session):
         return ui.div(*items)
 
     @reactive.Effect
+    @reactive.event(geo_data)
     def _update_pa_assignments():
         gdf = geo_data.get()
         if gdf is None:
@@ -2111,7 +2143,6 @@ def server(input, output, session):
         if file_info is None or len(file_info) == 0:
             return
         try:
-            import eunis_data
             gdf = eunis_data.load_eunis_overlay(file_info[0]["datapath"])
             eunis_overlay.set(gdf)
             # Auto-populate habitat assignments from overlay
@@ -2177,7 +2208,6 @@ def server(input, output, session):
         overlay = eunis_overlay.get()
         if overlay is None:
             return pd.DataFrame()
-        import eunis_data
         eva = cached_eva_data()
         if eva is None:
             return pd.DataFrame({"Error": ["EVA data not found"]})
@@ -2198,7 +2228,6 @@ def server(input, output, session):
         if overlay is None:
             ui.notification_show("Upload a EUNIS overlay first.", type="warning")
             return None
-        import eunis_data
         from pa_export import generate_bbt8_workbook
 
         eva = cached_eva_data()
@@ -2237,7 +2266,7 @@ def server(input, output, session):
             "Framework": "SEEA EA / MARBEFES WP4",
             "Generated": pd.Timestamp.now().strftime("%Y-%m-%d"),
             "EUNIS Source": "EMODnet EUSeaMap 2023",
-            "EVA Version": "MARBEFES EVA v3.4",
+            "EVA Version": f"MARBEFES EVA v{get_version()}",
         }
 
         return generate_bbt8_workbook(

@@ -139,11 +139,21 @@ class TestRescaleQuantitative:
         # min should be 10, max 20 → 10→0, 20→5
         assert result["Sp1"].iloc[0] == pytest.approx(0.0)
         assert result["Sp1"].iloc[1] == pytest.approx(5.0)
-        # NaN filled with 0 then rescaled: (0-10)/(20-10)*5 = -5
-        # The implementation fills NaN with 0 *before* rescaling from true range
-        # so the NaN slot gets (0-10)/(20-10)*5 = -5
-        # This is the actual behavior — document it.
+        # NaN is replaced with 0 after rescaling (not before), so it maps to 0.0.
         assert pd.notna(result["Sp1"].iloc[2])
+        assert result["Sp1"].iloc[2] == pytest.approx(0.0)
+
+    def test_nan_stays_in_valid_range(self):
+        df = pd.DataFrame({
+            "Subzone ID": ["A", "B", "C", "D", "E"],
+            "Sp1": [5.0, np.nan, 15.0, np.nan, 25.0],
+            "Sp2": [np.nan, 10.0, np.nan, 20.0, 30.0],
+        })
+        result = rescale_quantitative(df)
+        for col in ["Sp1", "Sp2"]:
+            vals = result[col]
+            assert vals.min() >= 0.0, f"{col} has value below 0"
+            assert vals.max() <= MAX_EV_SCALE, f"{col} has value above {MAX_EV_SCALE}"
 
     def test_constant_column(self):
         df = pd.DataFrame({
@@ -151,7 +161,24 @@ class TestRescaleQuantitative:
             "Sp1": [7.0, 7.0, 7.0],
         })
         result = rescale_quantitative(df)
+        assert (result["Sp1"] == MAX_EV_SCALE).all()
+
+    def test_constant_zero_column(self):
+        df = pd.DataFrame({
+            "Subzone ID": ["A", "B", "C"],
+            "Sp1": [0.0, 0.0, 0.0],
+        })
+        result = rescale_quantitative(df)
         assert (result["Sp1"] == 0).all()
+
+    def test_constant_positive_gets_max_scale(self):
+        """Uniform positive values should get MAX_EV_SCALE, not zero."""
+        df = pd.DataFrame({
+            "Subzone ID": ["A", "B", "C"],
+            "Sp1": [3.5, 3.5, 3.5],
+        })
+        result = rescale_quantitative(df)
+        assert (result["Sp1"] == MAX_EV_SCALE).all()
 
     def test_all_nan_column(self):
         df = pd.DataFrame({
@@ -194,6 +221,16 @@ class TestClassifyFeatures:
         df = pd.DataFrame({
             "Subzone ID": ["A", "B", "C"],
             "Sp1": [0, 0, 0],
+        })
+        cls = classify_features(df, {})
+        assert cls["LRF"]["Sp1"] == 0
+        assert cls["ROF"]["Sp1"] == 0
+
+    def test_all_nan_column(self):
+        """All-NaN feature should be neither LRF nor ROF."""
+        df = pd.DataFrame({
+            "Subzone ID": ["A", "B", "C"],
+            "Sp1": [np.nan, np.nan, np.nan],
         })
         cls = classify_features(df, {})
         assert cls["LRF"]["Sp1"] == 0
@@ -331,6 +368,54 @@ class TestCalculateAllAqs:
         # Quantitative AQs should be NaN
         assert pd.isna(results["AQ8"].iloc[0])
 
+    def test_qualitative_aq7_hand_verified(self):
+        """Hand-verified: 3 subzones, 3 features, qualitative.
+        AQ7 = mean of rescaled values for ALL features.
+        Feature present = 5, absent = 0. Mean of row values.
+
+        Subzone A: [1, 0, 1] → rescaled [5, 0, 5] → AQ7 = 10/3 = 3.333
+        Subzone B: [0, 1, 0] → rescaled [0, 5, 0] → AQ7 = 5/3 = 1.667
+        Subzone C: [1, 1, 1] → rescaled [5, 5, 5] → AQ7 = 5.0
+        """
+        df = pd.DataFrame({
+            "Subzone ID": ["A", "B", "C"],
+            "Sp1": [1, 0, 1],
+            "Sp2": [0, 1, 1],
+            "Sp3": [1, 0, 1],
+        })
+        rescaled_qual = rescale_qualitative(df)
+        rescaled_quant = rescale_quantitative(df)
+        cls = classify_features(df, {})
+        aq9 = calculate_aq9_special(df, cls)
+        results = calculate_all_aqs(df, "qualitative", rescaled_qual, rescaled_quant, aq9, cls)
+
+        assert results["AQ7"].iloc[0] == pytest.approx(10/3, abs=0.01)  # A
+        assert results["AQ7"].iloc[1] == pytest.approx(5/3, abs=0.01)   # B
+        assert results["AQ7"].iloc[2] == pytest.approx(5.0)              # C
+
+    def test_quantitative_aq8_hand_verified(self):
+        """Hand-verified: AQ8 = mean of rescaled ROF feature values.
+        10 subzones, 2 features. Both occur in >5% → both ROF.
+        Feature X: values [0,1,2,3,4,5,6,7,8,9] → min-max rescaled to [0, 0.556, ..., 5.0]
+        Feature Y: values [9,8,7,6,5,4,3,2,1,0] → same rescaling reversed
+        AQ8 per subzone = mean of rescaled X and Y.
+        Since X+Y=9 for all rows, rescaled_X + rescaled_Y ≈ 5.0, so AQ8 ≈ 2.5 for all.
+        """
+        df = pd.DataFrame({
+            "Subzone ID": [f"S{i}" for i in range(10)],
+            "X": list(range(10)),
+            "Y": list(range(9, -1, -1)),
+        })
+        rescaled_qual = rescale_qualitative(df)
+        rescaled_quant = rescale_quantitative(df)
+        cls = classify_features(df, {})
+        aq9 = calculate_aq9_special(df, cls)
+        results = calculate_all_aqs(df, "quantitative", rescaled_qual, rescaled_quant, aq9, cls)
+
+        # All subzones should have AQ8 ≈ 2.5 (mean of complementary rescaled values)
+        for i in range(10):
+            assert results["AQ8"].iloc[i] == pytest.approx(2.5, abs=0.1)
+
     def test_quantitative_basic(self):
         """Simple quantitative data → AQ8 should have values for ROF features."""
         n = 20
@@ -350,3 +435,97 @@ class TestCalculateAllAqs:
             assert results["AQ8"].notna().any()
         # Qualitative AQs should be NaN
         assert pd.isna(results["AQ7"].iloc[0])
+
+
+# ---------------------------------------------------------------------------
+# TestAQ9Concentration
+# ---------------------------------------------------------------------------
+
+class TestAQ9Concentration:
+    """Tests for AQ9 concentration-weighted calculation."""
+
+    def _make_concentrated_df(self):
+        """Two ROF features: A concentrated in 2/10, B evenly spread."""
+        return pd.DataFrame({
+            'Subzone ID': [f'S{i}' for i in range(10)],
+            'A': [0, 0, 0, 0, 0, 0, 0, 0, 50, 50],
+            'B': [8, 9, 10, 11, 12, 8, 9, 10, 11, 12],
+        })
+
+    def test_concentrated_feature_dominates(self):
+        """Feature concentrated in few subzones should score higher than spread feature."""
+        df = self._make_concentrated_df()
+        cls = classify_features(df, {})
+        aq9 = calculate_aq9_special(df, cls)
+
+        assert aq9['A'].max() > aq9['B'].max()
+        assert aq9['A'].max() == pytest.approx(MAX_EV_SCALE)
+
+    def test_concentration_weighting_has_effect(self):
+        """AQ9 should differ from naive normalize-by-mean rescaling."""
+        df = self._make_concentrated_df()
+        cls = classify_features(df, {})
+        aq9 = calculate_aq9_special(df, cls)
+
+        # Naive: normalize by mean, rescale per-feature to 0-5
+        values_b = df['B'].fillna(0)
+        normalized_b = values_b / values_b.mean()
+        naive_b = MAX_EV_SCALE * normalized_b / normalized_b.max()
+
+        # AQ9 for B should NOT match naive (concentration ratio should change it)
+        assert not np.allclose(aq9['B'].values, naive_b.values, atol=1e-6)
+
+    def test_aq9_differs_from_aq8(self):
+        """AQ9 (concentration-weighted) and AQ8 (plain quantitative) should differ."""
+        df = self._make_concentrated_df()
+        cls = classify_features(df, {})
+        rescaled_qual = rescale_qualitative(df)
+        rescaled_quant = rescale_quantitative(df)
+        aq9 = calculate_aq9_special(df, cls)
+
+        results = calculate_all_aqs(df, "quantitative", rescaled_qual, rescaled_quant, aq9, cls)
+        assert not np.allclose(results['AQ8'].values, results['AQ9'].values, atol=1e-6)
+
+    def test_scale_invariance(self):
+        """Doubling subzones with same proportions should give same CR ratios."""
+        df10 = self._make_concentrated_df()
+        cls10 = classify_features(df10, {})
+        aq9_10 = calculate_aq9_special(df10, cls10)
+
+        # Same pattern doubled
+        df20 = pd.DataFrame({
+            'Subzone ID': [f'S{i}' for i in range(20)],
+            'A': [0]*16 + [50]*4,
+            'B': [8, 9, 10, 11, 12] * 4,
+        })
+        cls20 = classify_features(df20, {})
+        aq9_20 = calculate_aq9_special(df20, cls20)
+
+        ratio_10 = aq9_10['A'].max() / aq9_10['B'].max()
+        ratio_20 = aq9_20['A'].max() / aq9_20['B'].max()
+
+        # Ratios should be identical (0% difference) with occurrence proportion
+        assert ratio_10 == pytest.approx(ratio_20, rel=1e-6)
+
+    def test_all_zero_feature(self):
+        """Feature with all zeros should produce all-zero AQ9."""
+        df = pd.DataFrame({
+            'Subzone ID': ['S0', 'S1', 'S2'],
+            'A': [0, 0, 0],
+            'B': [10, 20, 30],
+        })
+        cls = classify_features(df, {})
+        aq9 = calculate_aq9_special(df, cls)
+        # A has proportion 0, so not ROF → all zeros
+        assert (aq9['A'] == 0).all()
+
+    def test_single_rof_feature(self):
+        """Single ROF feature should rescale to 0-5."""
+        df = pd.DataFrame({
+            'Subzone ID': [f'S{i}' for i in range(10)],
+            'X': [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        })
+        cls = classify_features(df, {})
+        aq9 = calculate_aq9_special(df, cls)
+        assert aq9['X'].max() == pytest.approx(MAX_EV_SCALE)
+        assert aq9['X'].min() >= 0

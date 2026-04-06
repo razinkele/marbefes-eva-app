@@ -27,7 +27,13 @@ from eva_config import (
     EXPORT_ALT_ROW_COLOR,
     EXPORT_MULTI_EC_TAB_COLOR,
     EXPORT_CHART_TAB_COLOR,
+    HEATMAP_HEIGHT_PER_ROW,
+    HEATMAP_MIN_HEIGHT,
+    CHART_EXPORT_WIDTH,
+    CHART_EXPORT_HEIGHT,
 )
+
+from eva_calculations import merge_multi_ec_ev
 
 logger = logging.getLogger(__name__)
 
@@ -192,20 +198,17 @@ def _build_data_sheets(writer, results, df, user_classifications):
     """Write Original Data, AQ & EV Results, Feature Classifications,
     AQ Methodology, EV Calculation, and Complete Results sheets."""
 
-    # Sheet 2: Original Data (with NaN replaced by 0)
+    # Sheet 2: Original Data (NaN exports as empty cells)
     df_export = df.copy()
-    feature_cols_export = [col for col in df_export.columns if col != "Subzone ID"]
-    df_export[feature_cols_export] = df_export[feature_cols_export].fillna(0)
     df_export.to_excel(writer, sheet_name="Original Data", index=False)
 
-    # Sheet 3: Assessment Questions Results (with NaN replaced by 0)
+    # Sheet 3: Assessment Questions Results (NaN exports as empty cells)
     aq_cols = (
         ["Subzone ID"]
         + [col for col in results.columns if col.startswith("AQ")]
         + ["EV"]
     )
     results_export = results[aq_cols].copy()
-    results_export = results_export.fillna(0)
     results_export.to_excel(writer, sheet_name="AQ & EV Results", index=False)
 
     # Sheet 4: Feature Classifications
@@ -235,9 +238,8 @@ def _build_data_sheets(writer, results, df, user_classifications):
     ev_df = pd.DataFrame(EV_EXPLANATION)
     ev_df.to_excel(writer, sheet_name="EV Calculation", index=False)
 
-    # Sheet 7: Complete Results (All Data with NaN replaced by 0)
+    # Sheet 7: Complete Results (NaN exports as empty cells)
     results_complete = results.copy()
-    results_complete = results_complete.fillna(0)
     results_complete.to_excel(writer, sheet_name="Complete Results", index=False)
 
 
@@ -247,23 +249,9 @@ def _build_multi_ec_sheets(writer, results, ec_store):
         return
 
     # Aggregation sheet
-    ev_frames = {}
-    for ec_name, ec in ec_store.items():
-        if ec["results"] is not None:
-            ev_frames[ec_name] = ec["results"][["Subzone ID", "EV"]].rename(
-                columns={"EV": ec_name}
-            )
+    merged = merge_multi_ec_ev(ec_store)
 
-    if ev_frames:
-        merged = None
-        for ec_name, df_ev in ev_frames.items():
-            if merged is None:
-                merged = df_ev
-            else:
-                merged = merged.merge(df_ev, on="Subzone ID", how="outer")
-        ec_names = list(ev_frames.keys())
-        merged[ec_names] = merged[ec_names].fillna(0)
-        merged["Total EV"] = merged[ec_names].sum(axis=1)
+    if merged is not None:
         merged = merged.sort_values("Total EV", ascending=False)
         merged.to_excel(
             writer, sheet_name="Aggregated EV", index=False, startrow=2
@@ -297,24 +285,8 @@ def _build_chart_sheets(workbook, results, ec_store):
     # Chart 1: EV by Subzone bar chart
     try:
         if len(ec_store) >= 2:
-            ev_frames = {}
-            for ec_nm, ec_data in ec_store.items():
-                if ec_data["results"] is not None:
-                    ev_frames[ec_nm] = ec_data["results"][
-                        ["Subzone ID", "EV"]
-                    ].rename(columns={"EV": ec_nm})
-            if ev_frames:
-                merged_chart = None
-                for ec_nm, df_ev in ev_frames.items():
-                    if merged_chart is None:
-                        merged_chart = df_ev
-                    else:
-                        merged_chart = merged_chart.merge(
-                            df_ev, on="Subzone ID", how="outer"
-                        )
-                ec_nm_list = list(ev_frames.keys())
-                merged_chart[ec_nm_list] = merged_chart[ec_nm_list].fillna(0)
-                merged_chart["Total EV"] = merged_chart[ec_nm_list].sum(axis=1)
+            merged_chart = merge_multi_ec_ev(ec_store)
+            if merged_chart is not None:
                 chart_ev_x = merged_chart["Subzone ID"]
                 chart_ev_y = merged_chart["Total EV"]
                 chart_ev_title = "Total EV by Subzone (Aggregated)"
@@ -338,17 +310,17 @@ def _build_chart_sheets(workbook, results, ec_store):
             title=chart_ev_title,
             xaxis_title="Subzone ID",
             yaxis_title="EV Score",
-            height=500,
-            width=800,
+            height=CHART_EXPORT_HEIGHT,
+            width=CHART_EXPORT_WIDTH,
             plot_bgcolor="rgba(0,0,0,0)",
         )
-        ev_img_bytes = pio.to_image(fig_ev, format="png", width=800, height=500, scale=2)
+        ev_img_bytes = pio.to_image(fig_ev, format="png", width=CHART_EXPORT_WIDTH, height=CHART_EXPORT_HEIGHT, scale=2)
         ev_img_stream = io.BytesIO(ev_img_bytes)
         ws_chart1 = workbook.create_sheet("Chart - EV by Subzone")
         ws_chart1.sheet_properties.tabColor = EXPORT_CHART_TAB_COLOR
         img1 = XlImage(ev_img_stream)
-        img1.width = 800
-        img1.height = 500
+        img1.width = CHART_EXPORT_WIDTH
+        img1.height = CHART_EXPORT_HEIGHT
         ws_chart1.add_image(img1, "A1")
     except Exception as e:
         logger.warning("EV bar chart failed: %s", e)
@@ -378,19 +350,19 @@ def _build_chart_sheets(workbook, results, ec_store):
                 title="AQ Scores x Subzones (sorted by EV)",
                 xaxis_title="Assessment Questions",
                 yaxis_title="Subzone ID",
-                height=max(450, len(sorted_res) * 25),
-                width=800,
+                height=max(HEATMAP_MIN_HEIGHT, len(sorted_res) * HEATMAP_HEIGHT_PER_ROW),
+                width=CHART_EXPORT_WIDTH,
                 plot_bgcolor="rgba(0,0,0,0)",
             )
-            hm_height = max(450, len(sorted_res) * 25)
+            hm_height = max(HEATMAP_MIN_HEIGHT, len(sorted_res) * HEATMAP_HEIGHT_PER_ROW)
             hm_img_bytes = pio.to_image(
-                fig_heatmap, format="png", width=800, height=hm_height, scale=2
+                fig_heatmap, format="png", width=CHART_EXPORT_WIDTH, height=hm_height, scale=2
             )
             hm_img_stream = io.BytesIO(hm_img_bytes)
             ws_chart2 = workbook.create_sheet("Chart - AQ Heatmap")
             ws_chart2.sheet_properties.tabColor = EXPORT_CHART_TAB_COLOR
             img2 = XlImage(hm_img_stream)
-            img2.width = 800
+            img2.width = CHART_EXPORT_WIDTH
             img2.height = hm_height
             ws_chart2.add_image(img2, "A1")
     except Exception as e:
@@ -408,20 +380,20 @@ def _build_chart_sheets(workbook, results, ec_store):
             title="EV Score Distribution",
             xaxis_title="EV Score",
             yaxis_title="Count",
-            height=500,
-            width=800,
+            height=CHART_EXPORT_HEIGHT,
+            width=CHART_EXPORT_WIDTH,
             plot_bgcolor="rgba(0,0,0,0)",
             bargap=0.05,
         )
         hist_img_bytes = pio.to_image(
-            fig_hist, format="png", width=800, height=500, scale=2
+            fig_hist, format="png", width=CHART_EXPORT_WIDTH, height=CHART_EXPORT_HEIGHT, scale=2
         )
         hist_img_stream = io.BytesIO(hist_img_bytes)
         ws_chart3 = workbook.create_sheet("Chart - EV Distribution")
         ws_chart3.sheet_properties.tabColor = EXPORT_CHART_TAB_COLOR
         img3 = XlImage(hist_img_stream)
-        img3.width = 800
-        img3.height = 500
+        img3.width = CHART_EXPORT_WIDTH
+        img3.height = CHART_EXPORT_HEIGHT
         ws_chart3.add_image(img3, "A1")
     except Exception as e:
         logger.warning("EV distribution chart failed: %s", e)
@@ -438,6 +410,49 @@ def _build_chart_sheets(workbook, results, ec_store):
                        value="Tip: Ensure kaleido is installed (pip install kaleido)")
 
 
+def _build_eunis_ev_sheet(writer, results, eunis_overlay_data):
+    """Write EV aggregated by EUNIS habitat type.
+
+    Args:
+        writer: ExcelWriter
+        results: DataFrame with Subzone ID, AQ columns, EV
+        eunis_overlay_data: DataFrame with Subzone_ID, dominant_EUNIS, dominant_EUNIS_name
+    """
+    if eunis_overlay_data is None or eunis_overlay_data.empty:
+        return
+
+    # Normalize ID column
+    id_col = "Subzone_ID" if "Subzone_ID" in eunis_overlay_data.columns else "Subzone ID"
+    res_id_col = "Subzone ID" if "Subzone ID" in results.columns else "Subzone_ID"
+
+    eunis_sub = eunis_overlay_data[[id_col, "dominant_EUNIS", "dominant_EUNIS_name"]].copy()
+    eunis_sub = eunis_sub.rename(columns={id_col: "merge_id"})
+
+    res_sub = results.copy()
+    res_sub = res_sub.rename(columns={res_id_col: "merge_id"})
+
+    merged = eunis_sub.merge(res_sub, on="merge_id", how="inner")
+    if merged.empty:
+        return
+
+    # Get AQ and EV columns
+    aq_cols = [c for c in merged.columns if c.startswith("AQ") or c == "EV"]
+
+    # Aggregate: mean per EUNIS class
+    agg = merged.groupby(["dominant_EUNIS", "dominant_EUNIS_name"])[aq_cols].agg(
+        ["mean", "min", "max", "count"]
+    ).round(3)
+
+    # Flatten multi-index columns
+    agg.columns = [f"{c[0]}_{c[1]}" for c in agg.columns]
+    agg = agg.reset_index()
+    agg = agg.rename(columns={"dominant_EUNIS": "EUNIS Code", "dominant_EUNIS_name": "Habitat"})
+
+    agg.to_excel(writer, sheet_name="EV by Habitat Type", index=False, startrow=2)
+    ws = writer.sheets["EV by Habitat Type"]
+    ws.cell(row=1, column=1, value="Ecological Value by EUNIS Habitat Type")
+
+
 def _apply_styling(workbook):
     """Apply professional styling, conditional formatting, and tab colors
     to every sheet in the workbook."""
@@ -451,6 +466,8 @@ def _apply_styling(workbook):
         # Multi-EC sheets have data starting at row 3 (title in row 1, header in row 3)
         if sheet_name.startswith("EC - ") or sheet_name == "Aggregated EV":
             ws.sheet_properties.tabColor = EXPORT_MULTI_EC_TAB_COLOR
+            style_worksheet(ws, start_row=3)
+        elif sheet_name == "EV by Habitat Type":
             style_worksheet(ws, start_row=3)
         else:
             style_worksheet(ws)
@@ -554,6 +571,13 @@ def build_workbook(results, uploaded_data, user_classifications,
         # Embedded chart sheets
         _build_chart_sheets(writer.book, results, ec_store)
 
+        # EUNIS habitat summary (if overlay data provided)
+        if pa_summary_data is not None:
+            try:
+                _build_eunis_ev_sheet(writer, results, pa_summary_data)
+            except Exception as e:
+                logger.warning("EUNIS EV sheet failed: %s", e)
+
         # Professional styling, conditional formatting, tab colors
         _apply_styling(writer.book)
 
@@ -562,10 +586,11 @@ def build_workbook(results, uploaded_data, user_classifications,
 
 
 def generate_workbook(results, uploaded_data, user_classifications,
-                      data_type, metadata, ec_store):
+                      data_type, metadata, ec_store, pa_summary_data=None):
     """Backward-compatible entry point — returns io.BytesIO buffer."""
     wb = build_workbook(results, uploaded_data, user_classifications,
-                        data_type, metadata, ec_store)
+                        data_type, metadata, ec_store,
+                        pa_summary_data=pa_summary_data)
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)

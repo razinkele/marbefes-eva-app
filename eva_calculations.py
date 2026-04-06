@@ -86,6 +86,12 @@ def rescale_qualitative(df: pd.DataFrame) -> pd.DataFrame:
         # Fill any NaN with 0 first
         values = df[col].fillna(0)
 
+        # Warn if non-binary values detected (would produce scores > MAX_EV_SCALE)
+        max_val = values.max()
+        if max_val > 1:
+            logger.warning("Feature '%s' has non-binary values (max=%.2f) in qualitative mode. "
+                           "Rescaled values will exceed 0-%d range.", col, max_val, MAX_EV_SCALE)
+
         # Simple rescaling: 1 -> MAX_EV_SCALE, 0 -> 0
         rescaled[col] = values * MAX_EV_SCALE
 
@@ -123,8 +129,11 @@ def rescale_quantitative(df: pd.DataFrame) -> pd.DataFrame:
             # Set originally-NaN cells to 0 (not rescaled, just absent)
             rescaled[col] = rescaled[col].fillna(0)
         else:
-            # All non-NaN values are the same
-            rescaled[col] = 0
+            # All non-NaN values are the same — feature is uniformly present
+            if min_val > 0:
+                rescaled[col] = MAX_EV_SCALE  # uniform positive = max relative presence
+            else:
+                rescaled[col] = 0  # all zeros = absent
 
     return rescaled
 
@@ -182,20 +191,25 @@ def calculate_aq9_special(
     percentile: int = PERCENTILE_95,
 ) -> pd.DataFrame:
     """
-    Calculate AQ9 special 3-step concentration-weighted values
-    Step 1: Normalize by mean
-    Step 2: Apply concentration ratio
-    Step 3: Rescale to 0-MAX_EV_SCALE
-    Handles NaN by replacing with 0
+    Calculate AQ9 special 3-step concentration-weighted values.
+
+    Step 1: Normalize each feature by its mean.
+    Step 2: Weight by concentration ratio  CR = Y / Z_prop  where
+            Y = proportion of total abundance in the top-percentile values,
+            Z_prop = occurrence proportion (fraction of subzones occupied).
+            Using proportion instead of absolute count makes CR
+            scale-invariant across different grid resolutions.
+    Step 3: Rescale to 0-MAX_EV_SCALE using a *global* maximum across all
+            ROF features so that inter-feature concentration differences
+            are preserved.  (Per-feature rescaling would cancel CR.)
     """
     feature_cols = [col for col in df.columns if col != 'Subzone ID']
+    n_subzones = len(df)
     aq9_rescaled = pd.DataFrame(index=df.index)
     aq9_rescaled['Subzone ID'] = df['Subzone ID']
 
     for col in feature_cols:
         if classifications['ROF'][col] == 1:
-            # Step 1: Calculate concentration metrics
-            # Fill NaN with 0 first
             values = df[col].fillna(0)
             mean_val = values.mean()
 
@@ -203,32 +217,30 @@ def calculate_aq9_special(
                 aq9_rescaled[col] = 0
                 continue
 
-            # Step 2: Normalize by mean (with safety check)
+            # Step 1: Normalize by mean
             try:
                 normalized = values / mean_val
             except (ZeroDivisionError, FloatingPointError):
                 aq9_rescaled[col] = 0
                 continue
 
-            # Step 3: Calculate concentration weighting
-            # Find 95th percentile
+            # Step 2: Concentration weighting
             positive_values = values[values > 0]
             if len(positive_values) > 0:
                 try:
                     percentile_val = np.percentile(positive_values, percentile)
-                    sum_top_5_percent = values[values >= percentile_val].sum()
+                    sum_top = values[values >= percentile_val].sum()
                     total_sum = values.sum()
 
-                    # Y metric: percentage in top 5% (with division safety)
-                    y_metric = (sum_top_5_percent / total_sum) if total_sum > 0 else 0
+                    # Y: proportion of total abundance in top-percentile
+                    y_metric = (sum_top / total_sum) if total_sum > 0 else 0
 
-                    # Z metric: occurrence count
-                    z_metric = (values > 0).sum()
+                    # Z: occurrence proportion (scale-invariant)
+                    z_prop = (values > 0).sum() / n_subzones if n_subzones > 0 else 0
 
-                    # Concentration ratio (with division safety)
-                    concentration_ratio = (y_metric / z_metric) if z_metric > 0 else 0
+                    # CR = Y / Z_prop  (high when concentrated + spatially restricted)
+                    concentration_ratio = (y_metric / z_prop) if z_prop > 0 else 0
 
-                    # Apply concentration weighting
                     weighted = normalized * concentration_ratio
                 except (ZeroDivisionError, FloatingPointError, ValueError):
                     weighted = normalized * 0
@@ -239,16 +251,16 @@ def calculate_aq9_special(
         else:
             aq9_rescaled[col] = 0
 
-    # Step 4: Rescale all weighted values to 0-MAX_EV_SCALE range
-    for col in feature_cols:
-        if classifications['ROF'][col] == 1:
-            max_weighted = aq9_rescaled[col].max()
-            if max_weighted > 0 and not pd.isna(max_weighted):
-                try:
-                    aq9_rescaled[col] = MAX_EV_SCALE * aq9_rescaled[col] / max_weighted
-                except (ZeroDivisionError, FloatingPointError):
-                    aq9_rescaled[col] = 0
-            else:
+    # Step 3: Rescale using GLOBAL max across all ROF features.
+    # This preserves inter-feature concentration differences.
+    rof_cols = [col for col in feature_cols if classifications['ROF'].get(col) == 1]
+    if rof_cols:
+        global_max = aq9_rescaled[rof_cols].values.max()
+        if global_max > 0 and not pd.isna(global_max):
+            for col in rof_cols:
+                aq9_rescaled[col] = MAX_EV_SCALE * aq9_rescaled[col] / global_max
+        else:
+            for col in rof_cols:
                 aq9_rescaled[col] = 0
 
     return aq9_rescaled
@@ -357,6 +369,13 @@ def get_aq_status(
     has_hfs = any('HFS_BH' in (cls if isinstance(cls, list) else [cls]) for cls in classifications.values())
     has_ss = any('SS' in (cls if isinstance(cls, list) else [cls]) for cls in classifications.values())
 
+    # LRF is auto-computed from data, not user-classified; check results for activity
+    lrf_col = 'AQ1' if data_type == 'qualitative' else 'AQ2'
+    if isinstance(results, pd.DataFrame) and not results.empty and lrf_col in results.columns:
+        has_lrf = results[lrf_col].notna().any()
+    else:
+        has_lrf = False
+
     statuses = {}
     for aq in qual_aqs + quant_aqs:
         aq_num = int(aq[2:])
@@ -365,6 +384,8 @@ def get_aq_status(
             statuses[aq] = ('inactive', 'Quantitative data required')
         elif data_type == 'quantitative' and aq in qual_aqs:
             statuses[aq] = ('inactive', 'Qualitative data required')
+        elif aq_num in [1, 2] and not has_lrf:
+            statuses[aq] = ('inactive', 'No locally rare features in this dataset')
         elif aq_num in [3, 4] and not has_rrf:
             statuses[aq] = ('inactive', 'No features classified as RRF')
         elif aq_num in [5, 6] and not has_nrf:
@@ -383,3 +404,32 @@ def get_aq_status(
 
 def get_aq_tooltip(aq_name: str) -> str:
     return AQ_TOOLTIPS.get(aq_name, "")
+
+
+def merge_multi_ec_ev(ec_store: dict) -> pd.DataFrame | None:
+    """Merge EV scores from multiple ECs into a single DataFrame.
+
+    Returns DataFrame with columns: Subzone ID, <ec_name1>, <ec_name2>, ..., Total EV
+    Total EV = MAX across all EC EVs per subzone (per EVA guidance Nov 2024).
+    Returns None if no ECs have results.
+    """
+    ev_frames = {}
+    for ec_name, ec in ec_store.items():
+        if ec["results"] is not None:
+            ev_frames[ec_name] = ec["results"][["Subzone ID", "EV"]].rename(
+                columns={"EV": ec_name}
+            )
+    if not ev_frames:
+        return None
+
+    merged = None
+    for ec_name, df in ev_frames.items():
+        if merged is None:
+            merged = df
+        else:
+            merged = merged.merge(df, on="Subzone ID", how="outer")
+
+    ec_names = list(ev_frames.keys())
+    merged[ec_names] = merged[ec_names].fillna(0)
+    merged["Total EV"] = merged[ec_names].max(axis=1)
+    return merged

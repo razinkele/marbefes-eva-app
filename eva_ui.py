@@ -506,9 +506,8 @@ app_ui = ui.page_navbar(
                     ),
                     ui.panel_conditional(
                         "input.polygon_source === 'draw'",
-                        ui.output_ui("draw_map_output"),
                         ui.p(
-                            "Use the polygon tool on the map to draw your study area boundary.",
+                            "Use the polygon tool on the map (right panel) to draw your study area boundary.",
                             style="font-size: 0.85rem; color: #6c757d; margin-top: 0.5rem;",
                         ),
                     ),
@@ -548,8 +547,18 @@ app_ui = ui.page_navbar(
                 width=380,
             ),
             ui.div(
+                ui.panel_conditional(
+                    "input.polygon_source === 'draw'",
+                    ui.card(
+                        ui.card_header("🗺️ Draw Study Area"),
+                        ui.div(
+                            ui.output_ui("draw_map_output"),
+                            style="padding: 1rem;",
+                        ),
+                    ),
+                ),
                 ui.card(
-                    ui.card_header("🔷 Grid Setup"),
+                    ui.card_header("🔷 Grid Preview"),
                     ui.div(
                         ui.output_ui("grid_status_output"),
                         ui.output_ui("grid_preview_map_output"),

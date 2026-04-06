@@ -293,14 +293,23 @@ def generate_pa_workbook(
         ),
     ]
 
+    export_errors = []
     for sheet_title, builder in sheet_specs:
         ws = wb.create_sheet(title=sheet_title)
         ws.sheet_properties.tabColor = EXPORT_PA_TAB_COLOR
         try:
             builder(ws)
-        except Exception:
+        except Exception as e:
             logger.exception("Error building PA sheet '%s'", sheet_title)
+            export_errors.append(f"{sheet_title}: {e}")
         style_worksheet(ws)
+
+    if export_errors:
+        ws_err = wb.create_sheet("Export Errors")
+        ws_err.cell(row=1, column=1, value="Sheet Generation Errors")
+        ws_err.cell(row=2, column=1, value="The following sheets could not be generated:")
+        for i, err in enumerate(export_errors, start=3):
+            ws_err.cell(row=i, column=1, value=err)
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -373,16 +382,104 @@ def generate_combined_workbook(
         ),
     ]
 
+    export_errors = []
     for sheet_title, builder in pa_sheet_specs:
         ws = wb.create_sheet(title=sheet_title)
         ws.sheet_properties.tabColor = EXPORT_PA_TAB_COLOR
         try:
             builder(ws)
-        except Exception:
+        except Exception as e:
             logger.exception("Error building combined PA sheet '%s'", sheet_title)
+            export_errors.append(f"{sheet_title}: {e}")
         style_worksheet(ws)
+
+    if export_errors:
+        ws_err = wb.create_sheet("Export Errors")
+        ws_err.cell(row=1, column=1, value="Sheet Generation Errors")
+        ws_err.cell(row=2, column=1, value="The following sheets could not be generated:")
+        for i, err in enumerate(export_errors, start=3):
+            ws_err.cell(row=i, column=1, value=err)
 
     buffer = io.BytesIO()
     wb.save(buffer)
     buffer.seek(0)
     return buffer
+
+
+def generate_bbt8_workbook(accounts, main_values, extent, condition,
+                           supply, metadata, missing_values=None):
+    """Generate BBT8-format Excel workbook for Physical Accounts.
+
+    Follows the Irish Sea BBT8 standard with sheets:
+    ReadMe, main_values, habitat_area_sum, accounts, missing_values,
+    condition, supply.
+
+    Parameters
+    ----------
+    accounts : pd.DataFrame
+        Summary table with EUNIS code, name, area, EV, confidence.
+    main_values : pd.DataFrame
+        Per-subzone data: Subzone_ID, EUNIS_code, Habitat_EV,
+        Habitat_confidence.
+    extent : pd.DataFrame
+        Area per EUNIS class from ``compute_eunis_extent()``.
+    condition : pd.DataFrame
+        Condition stats per EUNIS class from ``compute_eunis_condition()``.
+    supply : pd.DataFrame
+        Ecosystem service proxies from ``compute_eunis_supply()``.
+    metadata : dict
+        Key-value pairs written to the ReadMe sheet.
+    missing_values : pd.DataFrame or None, optional
+        Data gaps table.  Omitted from the workbook when None or empty.
+
+    Returns
+    -------
+    io.BytesIO
+        Excel workbook serialised to a BytesIO buffer, seeked to position 0.
+    """
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        # ReadMe
+        readme_rows = [(k, v) for k, v in metadata.items()]
+        pd.DataFrame(readme_rows, columns=["Parameter", "Value"]).to_excel(
+            writer, sheet_name="ReadMe", index=False)
+
+        # main_values (per-subzone)
+        main_values.to_excel(writer, sheet_name="main_values", index=False)
+
+        # habitat_area_sum
+        if "area_m2" in extent.columns:
+            area_sum = extent[["EUNIS_code", "area_m2"]].copy()
+            area_sum.columns = ["EUNIS2019C", "Sum of area_m2"]
+        else:
+            area_sum = extent[["EUNIS_code", "total_area"]].copy()
+            area_sum.columns = ["EUNIS2019C", "Sum of area"]
+        area_sum.to_excel(writer, sheet_name="habitat_area_sum", index=False)
+
+        # accounts (main summary)
+        acct = accounts.copy()
+        acct.columns = [c.replace("EUNIS_code", "EUNIS2019C").replace("EUNIS_name", "Habitat")
+                        for c in acct.columns]
+        acct.to_excel(writer, sheet_name="accounts", index=False)
+
+        # missing_values
+        if missing_values is not None and not missing_values.empty:
+            missing_values.to_excel(writer, sheet_name="missing_values", index=False)
+
+        # condition
+        condition.to_excel(writer, sheet_name="condition", index=False)
+
+        # supply
+        supply.to_excel(writer, sheet_name="supply", index=False)
+
+    # Apply styling
+    buffer.seek(0)
+    wb = openpyxl.load_workbook(buffer)
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        style_worksheet(ws)
+        ws.sheet_properties.tabColor = "006994"
+    styled_buffer = io.BytesIO()
+    wb.save(styled_buffer)
+    styled_buffer.seek(0)
+    return styled_buffer

@@ -1,0 +1,349 @@
+"""
+Tests for pa_export.py -- standalone PA workbook, combined workbook, and BBT8 workbook.
+"""
+
+import io
+import sys
+import os
+from unittest.mock import patch, MagicMock
+
+import numpy as np
+import openpyxl
+import pandas as pd
+import pytest
+
+# Ensure project root is on sys.path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from pa_export import generate_pa_workbook, generate_combined_workbook, generate_bbt8_workbook
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _minimal_extent_df():
+    """Return a small extent DataFrame with a EUNIS code column and area."""
+    return pd.DataFrame({
+        "eunis_code": ["MA1", "MB1", "MC1"],
+        "area_ha": [100.0, 250.5, 75.0],
+    })
+
+
+def _minimal_supply_df():
+    """Return a small supply DataFrame."""
+    return pd.DataFrame({
+        "EUNIS_code": ["MA1", "MB1"],
+        "service_1": [0.8, 0.6],
+        "service_2": [0.3, 0.9],
+    })
+
+
+def _minimal_assignments():
+    return {"SZ_1": "MA1", "SZ_2": "MB1", "SZ_3": "MC1"}
+
+
+def _minimal_metadata():
+    return {
+        "eaa_name": "Test EAA",
+        "boundary_description": "Test boundary",
+        "accounting_year": "2025",
+    }
+
+
+def _minimal_bbt8_inputs():
+    """Return minimal DataFrames for generate_bbt8_workbook."""
+    accounts = pd.DataFrame({
+        "EUNIS_code": ["MA1", "MB1"],
+        "EUNIS_name": ["Littoral rock", "Infralittoral rock"],
+        "total_area": [100.0, 250.0],
+        "mean_EV": [3.5, 4.0],
+        "confidence": [0.8, 0.9],
+    })
+    main_values = pd.DataFrame({
+        "Subzone_ID": ["SZ_1", "SZ_2", "SZ_3"],
+        "EUNIS_code": ["MA1", "MB1", "MA1"],
+        "Habitat_EV": [3.0, 4.0, 4.0],
+        "Habitat_confidence": [0.8, 0.9, 0.7],
+    })
+    extent = pd.DataFrame({
+        "EUNIS_code": ["MA1", "MB1"],
+        "total_area": [100.0, 250.0],
+    })
+    condition = pd.DataFrame({
+        "EUNIS_code": ["MA1", "MB1"],
+        "mean_condition": [0.75, 0.85],
+    })
+    supply = pd.DataFrame({
+        "EUNIS_code": ["MA1", "MB1"],
+        "service_proxy": [0.6, 0.8],
+    })
+    metadata = {
+        "EAA": "Test EAA",
+        "Year": "2025",
+        "Description": "BBT8 test",
+    }
+    return dict(
+        accounts=accounts,
+        main_values=main_values,
+        extent=extent,
+        condition=condition,
+        supply=supply,
+        metadata=metadata,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Tests: generate_pa_workbook
+# ---------------------------------------------------------------------------
+
+class TestGeneratePAWorkbook:
+
+    def test_returns_bytesio(self):
+        """generate_pa_workbook returns a BytesIO buffer."""
+        buf = generate_pa_workbook(
+            extent_df=_minimal_extent_df(),
+            supply_df=_minimal_supply_df(),
+            assignments=_minimal_assignments(),
+            metadata=_minimal_metadata(),
+            completeness="100%",
+            unit="Ha",
+        )
+        assert isinstance(buf, io.BytesIO)
+        # Buffer should contain a valid xlsx
+        buf.seek(0)
+        wb = openpyxl.load_workbook(buf)
+        assert len(wb.sheetnames) > 0
+
+    def test_has_expected_sheets(self):
+        """PA workbook contains all 5 expected sheets."""
+        buf = generate_pa_workbook(
+            extent_df=_minimal_extent_df(),
+            supply_df=_minimal_supply_df(),
+            assignments=_minimal_assignments(),
+            metadata=_minimal_metadata(),
+            completeness="85%",
+        )
+        wb = openpyxl.load_workbook(buf)
+        expected = {
+            "Summary & Metadata",
+            "Ecosystem Extent Account",
+            "Supply Table",
+            "Habitat Assignments",
+            "Methodology",
+        }
+        actual = set(wb.sheetnames)
+        assert expected.issubset(actual), f"Missing sheets: {expected - actual}"
+
+    def test_extent_sheet_has_totals_row(self):
+        """Ecosystem Extent Account sheet has a TOTAL row at the bottom."""
+        buf = generate_pa_workbook(
+            extent_df=_minimal_extent_df(),
+            supply_df=None,
+            assignments=None,
+            metadata=_minimal_metadata(),
+            completeness="100%",
+        )
+        wb = openpyxl.load_workbook(buf)
+        ws = wb["Ecosystem Extent Account"]
+        last_row = ws.max_row
+        assert ws.cell(row=last_row, column=1).value == "TOTAL"
+
+    def test_none_extent_handled(self):
+        """None extent_df produces a valid workbook with 'No data' placeholder."""
+        buf = generate_pa_workbook(
+            extent_df=None,
+            supply_df=None,
+            assignments=None,
+            metadata=_minimal_metadata(),
+            completeness="0%",
+        )
+        wb = openpyxl.load_workbook(buf)
+        ws = wb["Ecosystem Extent Account"]
+        assert ws.cell(row=2, column=1).value == "No data available"
+
+    def test_none_supply_handled(self):
+        """None supply_df produces a 'No supply data' placeholder."""
+        buf = generate_pa_workbook(
+            extent_df=_minimal_extent_df(),
+            supply_df=None,
+            assignments=_minimal_assignments(),
+            metadata=_minimal_metadata(),
+            completeness="50%",
+        )
+        wb = openpyxl.load_workbook(buf)
+        ws = wb["Supply Table"]
+        assert ws.cell(row=2, column=1).value == "No supply data available"
+
+    def test_empty_assignments_handled(self):
+        """Empty assignments dict produces a placeholder row."""
+        buf = generate_pa_workbook(
+            extent_df=_minimal_extent_df(),
+            supply_df=_minimal_supply_df(),
+            assignments={},
+            metadata=_minimal_metadata(),
+            completeness="100%",
+        )
+        wb = openpyxl.load_workbook(buf)
+        ws = wb["Habitat Assignments"]
+        assert ws.cell(row=2, column=1).value == "No assignments available"
+
+    def test_summary_contains_metadata_fields(self):
+        """Summary sheet contains the EAA name from metadata."""
+        buf = generate_pa_workbook(
+            extent_df=_minimal_extent_df(),
+            supply_df=None,
+            assignments=None,
+            metadata=_minimal_metadata(),
+            completeness="100%",
+        )
+        wb = openpyxl.load_workbook(buf)
+        ws = wb["Summary & Metadata"]
+        # Scan for the EAA name value
+        values = [ws.cell(row=r, column=2).value for r in range(1, ws.max_row + 1)]
+        assert "Test EAA" in values
+
+
+# ---------------------------------------------------------------------------
+# Tests: generate_combined_workbook
+# ---------------------------------------------------------------------------
+
+class TestGenerateCombinedWorkbook:
+
+    def _make_eva_args(self):
+        """Build minimal eva_args dict for build_workbook."""
+        df = pd.DataFrame({
+            "Subzone ID": ["SZ_1", "SZ_2"],
+            "Feature_1": [1.0, 2.0],
+        })
+        results = pd.DataFrame({
+            "Subzone ID": ["SZ_1", "SZ_2"],
+            "AQ1": [1.0, 2.0],
+            "EV": [2.5, 3.5],
+        })
+        return dict(
+            results=results,
+            uploaded_data=df,
+            user_classifications={"Feature_1": []},
+            data_type="quantitative",
+            metadata={
+                "ec_name": "TestEC",
+                "study_area": "TestArea",
+                "data_description": "Test",
+            },
+            ec_store={
+                "TestEC": {
+                    "data": df,
+                    "data_type": "quantitative",
+                    "classifications": {"Feature_1": []},
+                    "results": results,
+                    "feature_count": 1,
+                }
+            },
+        )
+
+    @patch("eva_export.pio.to_image", side_effect=RuntimeError("no kaleido"))
+    def test_returns_bytesio(self, _mock_img):
+        """generate_combined_workbook returns a BytesIO buffer."""
+        buf = generate_combined_workbook(
+            eva_args=self._make_eva_args(),
+            pa_extent_df=_minimal_extent_df(),
+            pa_supply_df=_minimal_supply_df(),
+            pa_assignments=_minimal_assignments(),
+            pa_metadata=_minimal_metadata(),
+            pa_completeness="100%",
+            pa_unit="Ha",
+        )
+        assert isinstance(buf, io.BytesIO)
+        buf.seek(0)
+        wb = openpyxl.load_workbook(buf)
+        assert len(wb.sheetnames) > 0
+
+    @patch("eva_export.pio.to_image", side_effect=RuntimeError("no kaleido"))
+    def test_has_pa_sheets(self, _mock_img):
+        """Combined workbook contains PA-prefixed sheets."""
+        buf = generate_combined_workbook(
+            eva_args=self._make_eva_args(),
+            pa_extent_df=_minimal_extent_df(),
+            pa_supply_df=_minimal_supply_df(),
+            pa_assignments=_minimal_assignments(),
+            pa_metadata=_minimal_metadata(),
+            pa_completeness="100%",
+        )
+        wb = openpyxl.load_workbook(buf)
+        pa_sheets = {
+            "PA - Extent Account",
+            "PA - Supply Table",
+            "PA - Habitat Assignments",
+            "PA - Methodology",
+        }
+        actual = set(wb.sheetnames)
+        assert pa_sheets.issubset(actual), f"Missing PA sheets: {pa_sheets - actual}"
+
+
+# ---------------------------------------------------------------------------
+# Tests: generate_bbt8_workbook
+# ---------------------------------------------------------------------------
+
+class TestGenerateBBT8Workbook:
+
+    def test_returns_bytesio(self):
+        """generate_bbt8_workbook returns a BytesIO buffer."""
+        inputs = _minimal_bbt8_inputs()
+        buf = generate_bbt8_workbook(**inputs)
+        assert isinstance(buf, io.BytesIO)
+
+    def test_has_expected_sheets(self):
+        """BBT8 workbook contains the standard sheet set."""
+        inputs = _minimal_bbt8_inputs()
+        buf = generate_bbt8_workbook(**inputs)
+        wb = openpyxl.load_workbook(buf)
+        expected = {
+            "ReadMe",
+            "main_values",
+            "habitat_area_sum",
+            "accounts",
+            "condition",
+            "supply",
+        }
+        actual = set(wb.sheetnames)
+        assert expected.issubset(actual), f"Missing sheets: {expected - actual}"
+
+    def test_missing_values_sheet_omitted_when_none(self):
+        """missing_values sheet is NOT created when missing_values=None."""
+        inputs = _minimal_bbt8_inputs()
+        inputs["missing_values"] = None
+        buf = generate_bbt8_workbook(**inputs)
+        wb = openpyxl.load_workbook(buf)
+        assert "missing_values" not in wb.sheetnames
+
+    def test_missing_values_sheet_present_when_provided(self):
+        """missing_values sheet IS created when a non-empty DataFrame is given."""
+        inputs = _minimal_bbt8_inputs()
+        inputs["missing_values"] = pd.DataFrame({
+            "EUNIS_code": ["MC1"],
+            "gap_type": ["no_data"],
+        })
+        buf = generate_bbt8_workbook(**inputs)
+        wb = openpyxl.load_workbook(buf)
+        assert "missing_values" in wb.sheetnames
+
+    def test_readme_contains_metadata(self):
+        """ReadMe sheet contains the metadata key-value pairs."""
+        inputs = _minimal_bbt8_inputs()
+        buf = generate_bbt8_workbook(**inputs)
+        wb = openpyxl.load_workbook(buf)
+        ws = wb["ReadMe"]
+        # Row 2 should have first metadata key/value (row 1 is header)
+        assert ws.cell(row=2, column=1).value == "EAA"
+        assert ws.cell(row=2, column=2).value == "Test EAA"
+
+    def test_habitat_area_sum_uses_total_area(self):
+        """When extent has 'total_area' (not 'area_m2'), habitat_area_sum uses it."""
+        inputs = _minimal_bbt8_inputs()
+        buf = generate_bbt8_workbook(**inputs)
+        wb = openpyxl.load_workbook(buf)
+        ws = wb["habitat_area_sum"]
+        # Header row
+        assert ws.cell(row=1, column=1).value == "EUNIS2019C"
+        assert ws.cell(row=1, column=2).value == "Sum of area"

@@ -1,6 +1,6 @@
 # MARBEFES EVA — User Manual
 
-**Version 3.0.0** | Last updated: 2026-03-16
+**Version 3.5.1** | Last updated: 2026-03-18
 
 ## Table of Contents
 
@@ -45,6 +45,10 @@ shiny run app.py --port 8790
 ```
 
 Open `http://localhost:8790` in your browser.
+
+### Tutorial Data
+
+Sample data files for a complete walkthrough are available in the `tutorial/` directory (Lithuanian BBT5 dataset). See `docs/TUTORIAL.md` for a step-by-step guide (~30 minutes).
 
 ### Recommended Workflow
 
@@ -227,10 +231,22 @@ In the sidebar:
 1. Use the **EUNIS Habitats** dropdown to search and select habitat types from the built-in EUNIS Level 3 reference (~40 marine codes)
 2. To add a habitat not in the list, enter a custom code and name, then click **Add Custom Habitat**
 
+### Step 2.5: Upload EUNIS Overlay (Optional)
+
+Upload a EUNIS habitat polygon layer (GeoPackage or GeoJSON) to automatically assign EUNIS Level 3 habitat types to subzones via spatial overlay:
+
+1. Click **Browse** under "Upload EUNIS Overlay"
+2. Select a file such as `tutorial/eunis_l3_lithuanian.gpkg`
+3. The app intersects the overlay with your spatial grid and assigns the dominant habitat type per subzone
+4. HFS/BH features are auto-detected from EUNIS codes (habitat-forming species and biogenic habitats are classified automatically)
+
+The environment variable `MARBEFES_EVA_DATA_PATH` can be set to a directory containing EUNIS BBT8 account data files, which will be loaded automatically on startup.
+
 ### Step 3: Assign Habitats to Subzones
 
 The **Habitat Assignment** card shows:
 - **Auto-detection:** If your spatial file has a column named "EUNIS", "Habitat", or similar, habitats are pre-populated automatically
+- **EUNIS overlay:** If an overlay file was uploaded, habitats are assigned via spatial intersection with HFS/BH auto-classification
 - **Manual assignment:** Use the dropdowns to assign a EUNIS habitat type to each subzone
 - **Summary:** Shows how many subzones are assigned vs unassigned
 
@@ -251,11 +267,12 @@ The **Supply Table** card shows an editable grid:
 - Empty cells are tracked as data gaps — partial data is expected and acceptable per the SEEA EA guidance
 - The completeness indicator shows "X of Y cells filled (Z%)"
 
-### Step 6: Export
+### Step 6: BBT8 Export
 
-Use the sidebar buttons:
+When a EUNIS overlay is loaded, the export includes BBT8-level accounts:
 - **Download PA Report (Excel):** Standalone Physical Accounts workbook with 5 sheets
 - **Download Combined EVA+PA (Excel):** All EVA sheets plus PA sheets in one workbook
+- **Download BBT8 Export (Excel):** EUNIS-aware export with BBT8 physical accounts
 
 ### Default Benefits
 
@@ -309,6 +326,7 @@ Use the sidebar buttons:
 | **Color Scheme** | YlOrRd, Viridis, Blues, RdYlGn, Plasma |
 | **Classification** | Continuous, EVA 5-class (VL/L/M/H/VH) |
 | **Basemap** | CartoDB Positron, OpenStreetMap, CartoDB Dark Matter |
+| **EUNIS Habitat Base Layer** | Toggle on/off — shows EUNIS habitat polygons as a base layer when an overlay is loaded |
 | **Fill Opacity** | 0.3 to 1.0 |
 
 ### EVA 5-Class Classification
@@ -346,11 +364,14 @@ Downloaded from the **Total EV** tab. Contains:
 | AQ Methodology | Reference table of all 15 AQs |
 | EV Calculation | EV formula explanation |
 | Complete Results | Full merged dataset |
+| EV by Habitat Type | EV aggregated by EUNIS habitat type (only when EUNIS overlay is loaded) |
 | Chart - EV by Subzone | Embedded bar chart |
 | Chart - AQ Heatmap | Embedded heatmap |
 | Chart - EV Distribution | Embedded histogram |
 
 With multiple ECs: adds Aggregated EV and per-EC result sheets.
+
+**Total EV aggregation:** When multiple ECs are present, Total EV per subzone uses **MAX** aggregation (not average or sum). This ensures that any significant ecological value is captured.
 
 ### Excel Export (Physical Accounts)
 
