@@ -954,6 +954,13 @@ app_ui = ui.page_fluid(
                     ui.tags.a(
                         {"class": "nav-link",
                          "href": "#",
+                         "data-nav-id": "nav_sdm"},
+                        ui.tags.i(class_="bi bi-graph-up-arrow"),
+                        ui.tags.span("Species Distribution")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
                          "data-nav-id": "nav_help"},
                         ui.tags.i(class_="bi bi-question-circle-fill"),
                         ui.tags.span("Help & Method")
@@ -1892,6 +1899,96 @@ app_ui = ui.page_fluid(
                 ),
             )
         ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_sdm'",
+        ui.layout_sidebar(
+            ui.sidebar(
+                ui.h5("Species Distribution Modelling", style="color:#006994;font-weight:700;margin-bottom:1rem;"),
+
+                # Prerequisites status
+                ui.output_ui("sdm_prereq_status"),
+
+                ui.hr(),
+
+                # Response variable
+                ui.h6("Response Variable", style="font-weight:600;"),
+                ui.input_select("sdm_response_col", "Column with species data",
+                                choices=[], width="100%"),
+                ui.input_radio_buttons("sdm_response_type", "Response type",
+                    choices={"continuous": "Abundance / continuous",
+                             "binary":     "Presence/Absence (0/1)",
+                             "count":      "Count"},
+                    selected="continuous"),
+
+                ui.hr(),
+
+                # Predictor variables
+                ui.h6("Environmental Predictors", style="font-weight:600;"),
+                ui.p("Select covariates fetched in Grid Setup:",
+                     style="font-size:0.8rem;color:#666;margin-bottom:4px;"),
+                ui.output_ui("sdm_predictor_checkboxes"),
+
+                ui.hr(),
+
+                # Method
+                ui.h6("Modelling Method", style="font-weight:600;"),
+                ui.input_radio_buttons("sdm_method", None,
+                    choices={"ensemble": "Ensemble (GAM + IDW, recommended)",
+                             "gam":      "GAM only",
+                             "idw":      "IDW only"},
+                    selected="ensemble"),
+
+                # Advanced options (collapsible)
+                ui.tags.details(
+                    ui.tags.summary("Advanced options",
+                                    style="font-size:0.82rem;cursor:pointer;color:#006994;"),
+                    ui.input_numeric("sdm_idw_power", "IDW power", value=2.0,
+                                     min=0.5, max=5.0, step=0.5, width="100%"),
+                    ui.input_numeric("sdm_gam_splines", "GAM splines per term", value=10,
+                                     min=4, max=20, step=1, width="100%"),
+                    ui.input_slider("sdm_ensemble_weight", "GAM weight in ensemble",
+                                    min=0.0, max=1.0, value=0.5, step=0.1, width="100%"),
+                ),
+
+                ui.hr(),
+
+                # Column lat/lon overrides
+                ui.h6("Sampling site columns", style="font-weight:600;"),
+                ui.input_text("sdm_lat_col", "Latitude column", value="lat", width="100%"),
+                ui.input_text("sdm_lon_col", "Longitude column", value="lon", width="100%"),
+
+                ui.hr(),
+                ui.input_action_button("sdm_fit_btn", "Fit & Predict",
+                                       class_="btn btn-success w-100",
+                                       icon=ui.tags.i(class_="bi bi-play-fill")),
+                ui.br(),
+                ui.output_ui("sdm_fit_status"),
+
+                width=310,
+            ),
+            # Main content — map + diagnostics
+            ui.div(
+                ui.navset_tab(
+                    ui.nav_panel("🗺️ Predicted Distribution",
+                        ui.output_ui("sdm_map_output"),
+                    ),
+                    ui.nav_panel("📊 Model Diagnostics",
+                        ui.div(
+                            ui.output_ui("sdm_diagnostics_output"),
+                            style="padding:1rem;"
+                        ),
+                    ),
+                    ui.nav_panel("📋 Partial Effects (GAM)",
+                        ui.div(
+                            ui.output_ui("sdm_partial_effects_output"),
+                            style="padding:1rem;"
+                        ),
+                    ),
+                ),
+                style="height:100%;"
+            ),
+        )
                 ),
                 ui.panel_conditional(
                     "input.navigation === 'nav_help'",

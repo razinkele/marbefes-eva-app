@@ -19,6 +19,7 @@ import geopandas as gpd
 from html import escape as html_escape
 import eva_calculations
 import eva_export
+import eva_sdm
 import eunis_data
 import folium
 import folium.plugins
@@ -69,6 +70,10 @@ def server(input, output, session):
     boundary_polygon = reactive.Value(None)   # GeoDataFrame with boundary polygon
     generated_grid = reactive.Value(None)     # GeoDataFrame with generated hex grid
     sdm_covariates = reactive.Value(None)     # GeoDataFrame with all SDM covariate layers
+
+    # SDM reactive values
+    sdm_results = reactive.Value(None)        # dict: gam_model, idw_model, predictions, diagnostics, feat_names
+    sdm_fit_message = reactive.Value("")      # status message for fit button feedback
 
     # DwC-A state
     dwca_info = reactive.Value(None)   # DwC-A summary dict or None if CSV
@@ -2829,6 +2834,299 @@ def server(input, output, session):
         if assignments:
             base_choices.append("Habitat Type (PA)")
         ui.update_select("map_variable", choices=base_choices)
+
+    # ── SDM: dynamic UI ──────────────────────────────────────────────────────
+
+    @output
+    @render.ui
+    def sdm_prereq_status():
+        grid = generated_grid.get()
+        cov  = sdm_covariates.get()
+        data = uploaded_data.get()
+        items = []
+        ok = lambda msg: ui.tags.li(ui.tags.span("✅ ", style="color:green;"), msg)
+        bad = lambda msg: ui.tags.li(ui.tags.span("⚠️ ", style="color:orange;"), msg)
+        items.append(ok("Hex grid ready") if grid is not None else bad("No hex grid (run Grid Setup)"))
+        items.append(ok("Covariates loaded") if cov is not None else bad("No covariates (fetch in Grid Setup)"))
+        items.append(ok("Sampling data uploaded") if data is not None else bad("No data (upload in Data Input)"))
+        return ui.tags.ul(items, style="padding-left:1rem;font-size:0.83rem;")
+
+    @output
+    @render.ui
+    def sdm_predictor_checkboxes():
+        cov = sdm_covariates.get()
+        if cov is None:
+            return ui.p("Fetch covariates first.", style="color:#999;font-size:0.82rem;")
+        cols = eva_sdm.available_predictor_cols(cov)
+        label_map = {
+            "depth_m": "Depth (m)",
+            "eunis_code": "EUNIS 2019 habitat",
+            "substrate": "Substrate type",
+            "sst_mean_c": "SST (°C)",
+            "bottom_temp_c": "Bottom temp (°C)",
+            "sss_mean": "Salinity (PSU)",
+            "mld_mean_m": "Mixed layer depth (m)",
+            "current_speed_ms": "Current speed (m/s)",
+            "chl_mean": "Chlorophyll-a (mg/m³)",
+            "o2_mean_mmol": "Dissolved O₂ (mmol/m³)",
+            "no3_mean_mmol": "Nitrate (mmol/m³)",
+            "ph_mean": "pH",
+            "npp_mean": "Net primary production",
+        }
+        choices = {c: label_map.get(c, c) for c in cols}
+        return ui.input_checkbox_group(
+            "sdm_predictors", None,
+            choices=choices,
+            selected=list(choices.keys()),
+            width="100%",
+        )
+
+    @reactive.effect
+    @reactive.event(sdm_covariates, uploaded_data)
+    def _update_sdm_response_choices():
+        data = uploaded_data.get()
+        if data is None:
+            ui.update_select("sdm_response_col", choices=[], label="Column with species data")
+            return
+        numeric_cols = [c for c in data.columns
+                        if pd.api.types.is_numeric_dtype(data[c])
+                        and c.lower() not in {"lat", "lon", "latitude", "longitude",
+                                              "x", "y", "subzone id"}]
+        ui.update_select("sdm_response_col", choices=numeric_cols,
+                         selected=numeric_cols[0] if numeric_cols else None)
+
+    # ── SDM: fit and predict ─────────────────────────────────────────────────
+
+    @reactive.effect
+    @reactive.event(input.sdm_fit_btn)
+    def handle_fit_sdm():
+        grid = generated_grid.get()
+        cov  = sdm_covariates.get()
+        data = uploaded_data.get()
+
+        if grid is None or cov is None or data is None:
+            sdm_fit_message.set("⚠️ Please complete prerequisites: hex grid, covariates, and data upload.")
+            return
+
+        response_col  = input.sdm_response_col()
+        response_type = input.sdm_response_type()
+        method        = input.sdm_method()
+        predictor_cols = list(input.sdm_predictors()) if input.sdm_predictors() else []
+        lat_col = (input.sdm_lat_col() or "lat").strip()
+        lon_col = (input.sdm_lon_col() or "lon").strip()
+
+        if not response_col:
+            sdm_fit_message.set("⚠️ Select a response variable.")
+            return
+        if not predictor_cols:
+            sdm_fit_message.set("⚠️ Select at least one predictor.")
+            return
+        if lat_col not in data.columns or lon_col not in data.columns:
+            sdm_fit_message.set(f"⚠️ Columns '{lat_col}' / '{lon_col}' not found in uploaded data.")
+            return
+
+        sdm_fit_message.set("⏳ Extracting covariates at sampling sites…")
+
+        try:
+            # 1. Extract covariates at sampling sites
+            sites_with_cov = eva_sdm.extract_covariates_at_sites(
+                data, cov, lat_col=lat_col, lon_col=lon_col
+            )
+
+            # 2. Prepare features
+            predictor_cols_available = [c for c in predictor_cols if c in sites_with_cov.columns]
+            if not predictor_cols_available:
+                sdm_fit_message.set("⚠️ None of the selected predictors found after covariate extraction.")
+                return
+
+            X, y, feat_names = eva_sdm.prepare_features(
+                sites_with_cov, predictor_cols_available, response_col, response_type
+            )
+
+            idw_power    = float(input.sdm_idw_power() or 2.0)
+            gam_splines  = int(input.sdm_gam_splines() or 10)
+            ens_weight   = float(input.sdm_ensemble_weight() or 0.5)
+
+            gam_model = None
+            idw_model = None
+
+            # 3a. Fit GAM
+            if method in ("gam", "ensemble"):
+                sdm_fit_message.set("⏳ Fitting GAM…")
+                gam_model = eva_sdm.fit_gam(X, y, response_type, n_splines=gam_splines)
+
+            # 3b. Fit IDW
+            if method in ("idw", "ensemble"):
+                sdm_fit_message.set("⏳ Fitting IDW…")
+                idw_model = eva_sdm.fit_idw(
+                    sites_with_cov, response_col,
+                    power=idw_power, lat_col=lat_col, lon_col=lon_col
+                )
+
+            # 4. Predict for all grid cells
+            sdm_fit_message.set("⏳ Predicting distribution over grid…")
+            predictions = eva_sdm.predict_grid(
+                cov, predictor_cols_available,
+                gam_model=gam_model, idw_model=idw_model,
+                method=method,
+                ensemble_weight_gam=ens_weight,
+                response_type=response_type,
+                lat_col=lat_col, lon_col=lon_col,
+            )
+
+            # 5. Diagnostics — use in-sample predictions at sites
+            if gam_model is not None:
+                y_pred_sites = gam_model.predict(X)
+            else:
+                site_c = eva_sdm._sites_to_metric(sites_with_cov, lat_col, lon_col)
+                y_pred_sites = idw_model.predict(site_c)
+
+            diag = eva_sdm.model_diagnostics(y, y_pred_sites, response_type,
+                                              feat_names, gam_model)
+
+            sdm_results.set({
+                "gam_model":    gam_model,
+                "idw_model":    idw_model,
+                "predictions":  predictions,
+                "diagnostics":  diag,
+                "feat_names":   feat_names,
+                "response_col": response_col,
+                "method":       method,
+                "n_sites":      len(y),
+            })
+            sdm_fit_message.set(f"✅ Done — {len(y)} sites, {len(cov)} grid cells predicted.")
+
+        except Exception as e:
+            sdm_fit_message.set(f"❌ Error: {e}")
+
+    @output
+    @render.ui
+    def sdm_fit_status():
+        msg = sdm_fit_message.get()
+        if not msg:
+            return ui.div()
+        color = "#155724" if msg.startswith("✅") else ("#721c24" if msg.startswith("❌") else "#856404")
+        bg    = "#d4edda" if msg.startswith("✅") else ("#f8d7da" if msg.startswith("❌") else "#fff3cd")
+        return ui.div(msg, style=f"margin-top:8px;padding:8px;border-radius:4px;font-size:0.82rem;background:{bg};color:{color};")
+
+    # ── SDM: map output ──────────────────────────────────────────────────────
+
+    @output
+    @render.ui
+    def sdm_map_output():
+        import folium, branca.colormap as cm
+        res = sdm_results.get()
+        cov = sdm_covariates.get()
+        grid = generated_grid.get()
+
+        if res is None or cov is None:
+            center = [54.0, 21.0]
+            m = folium.Map(location=center, zoom_start=5, tiles="CartoDB positron")
+            folium.Marker(center, popup="Fit the SDM model first.").add_to(m)
+            return ui.HTML(m._repr_html_())
+
+        predictions = res["predictions"]
+        response_col = res["response_col"]
+
+        plot_gdf = cov.copy()
+        plot_gdf["sdm_pred"] = predictions.values
+
+        center = [plot_gdf.geometry.centroid.y.mean(), plot_gdf.geometry.centroid.x.mean()]
+        m = folium.Map(location=center, zoom_start=7, tiles="CartoDB positron")
+        folium.plugins.Fullscreen(position="topright").add_to(m)
+
+        valid = plot_gdf["sdm_pred"].dropna()
+        vmin, vmax = float(valid.min()), float(valid.max())
+        colormap = cm.linear.YlOrRd_09.scale(vmin, vmax)
+        colormap.caption = f"Predicted: {response_col}"
+        colormap.add_to(m)
+
+        plot_gdf_4326 = plot_gdf.to_crs("EPSG:4326")
+
+        def style_fn(feature):
+            val = feature["properties"].get("sdm_pred")
+            try:
+                color = colormap(float(val)) if val is not None and not (val != val) else "#cccccc"
+            except Exception:
+                color = "#cccccc"
+            return {"fillColor": color, "fillOpacity": 0.75, "color": "none", "weight": 0}
+
+        folium.GeoJson(
+            plot_gdf_4326.__geo_interface__,
+            style_function=style_fn,
+            tooltip=folium.GeoJsonTooltip(
+                fields=["sdm_pred"],
+                aliases=[f"Predicted {response_col}:"],
+                localize=True,
+            ),
+            name=f"SDM — {response_col}",
+        ).add_to(m)
+
+        folium.LayerControl().add_to(m)
+        return ui.HTML(m._repr_html_())
+
+    # ── SDM: diagnostics ─────────────────────────────────────────────────────
+
+    @output
+    @render.ui
+    def sdm_diagnostics_output():
+        res = sdm_results.get()
+        if res is None:
+            return ui.p("Run 'Fit & Predict' to see model diagnostics.", style="color:#999;")
+
+        diag_html = eva_sdm.format_diagnostics_html(res["diagnostics"], res["feat_names"])
+        method_labels = {"gam": "GAM", "idw": "IDW", "ensemble": "Ensemble (GAM + IDW)"}
+
+        summary = ui.div(
+            ui.h5(f"Model: {method_labels.get(res['method'], res['method'])}",
+                  style="color:#006994;"),
+            ui.p(f"Response: {res['response_col']} | Sites used: {res['n_sites']}",
+                 style="font-size:0.85rem;color:#555;"),
+            ui.HTML(diag_html),
+        )
+        return summary
+
+    @output
+    @render.ui
+    def sdm_partial_effects_output():
+        res = sdm_results.get()
+        if res is None:
+            return ui.p("Run 'Fit & Predict' to see partial effects.", style="color:#999;")
+        gam_model = res.get("gam_model")
+        if gam_model is None:
+            return ui.p("Partial effects are only available for GAM and Ensemble methods.",
+                        style="color:#999;")
+        try:
+            import plotly.graph_objects as go
+            from plotly.subplots import make_subplots
+            feat_names = res["feat_names"]
+            n = len(feat_names)
+            ncols = min(3, n)
+            nrows = (n + ncols - 1) // ncols
+            fig = make_subplots(rows=nrows, cols=ncols,
+                                subplot_titles=[f for f in feat_names])
+            for i, fname in enumerate(feat_names):
+                row = i // ncols + 1
+                col = i % ncols + 1
+                XX = gam_model.generate_X_grid(term=i)
+                pdep, confi = gam_model.partial_dependence(term=i, X=XX, width=0.95)
+                x_vals = XX[:, i]
+                fig.add_trace(go.Scatter(x=x_vals, y=pdep, mode="lines",
+                                         name=fname, showlegend=False,
+                                         line=dict(color="#006994", width=2)), row=row, col=col)
+                fig.add_trace(go.Scatter(
+                    x=list(x_vals) + list(x_vals[::-1]),
+                    y=list(confi[:, 0]) + list(confi[:, 1][::-1]),
+                    fill="toself", fillcolor="rgba(0,105,148,0.15)",
+                    line=dict(color="rgba(255,255,255,0)"),
+                    showlegend=False), row=row, col=col)
+            fig.update_layout(height=280 * nrows, title="GAM Partial Effects (95% CI)",
+                              font=dict(size=11))
+            import plotly.io as pio
+            return ui.HTML(pio.to_html(fig, full_html=False, include_plotlyjs="cdn"))
+        except Exception as e:
+            return ui.p(f"Could not render partial effects: {e}", style="color:#c00;")
+
 
 
 # Create the app with static file serving
