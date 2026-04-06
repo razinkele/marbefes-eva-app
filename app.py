@@ -3208,6 +3208,89 @@ def server(input, output, session):
         bg    = "#d4edda" if msg.startswith("✅") else ("#f8d7da" if msg.startswith("❌") else "#fff3cd")
         return ui.div(msg, style=f"margin-top:8px;padding:8px;border-radius:4px;font-size:0.82rem;background:{bg};color:{color};")
 
+    # ── SDM: sampling-site overlay helper ────────────────────────────────────
+
+    def _get_sdm_sample_df():
+        """Return the sampling DataFrame for the current SDM data source."""
+        try:
+            data_source = input.sdm_data_source()
+        except Exception:
+            data_source = "csv"
+        if data_source == "dwca":
+            return sdm_dwca_df.get(), "lat", "lon"
+        else:
+            data = uploaded_data.get()
+            if data is None:
+                return None, None, None
+            lat_col = (input.sdm_lat_col() or "lat").strip() if hasattr(input, "sdm_lat_col") else "lat"
+            lon_col = (input.sdm_lon_col() or "lon").strip() if hasattr(input, "sdm_lon_col") else "lon"
+            # Fall back to common names if the explicit ones are missing
+            if lat_col not in data.columns:
+                for cand in ("lat", "latitude", "decimalLatitude", "y", "Y"):
+                    if cand in data.columns:
+                        lat_col = cand; break
+            if lon_col not in data.columns:
+                for cand in ("lon", "longitude", "decimalLongitude", "x", "X"):
+                    if cand in data.columns:
+                        lon_col = cand; break
+            return data, lat_col, lon_col
+
+    def _add_sdm_sample_sites(m, response_col=None):
+        """
+        Add a toggleable FeatureGroup of sampling site markers to folium map m.
+        Markers are colour-coded by the response column value when available.
+        """
+        import branca.colormap as cm
+        data, lat_col, lon_col = _get_sdm_sample_df()
+        if data is None or lat_col not in data.columns or lon_col not in data.columns:
+            return
+
+        lats = pd.to_numeric(data[lat_col], errors="coerce")
+        lons = pd.to_numeric(data[lon_col], errors="coerce")
+        valid_mask = lats.notna() & lons.notna()
+        if not valid_mask.any():
+            return
+
+        # Build colour scale from response column if available
+        use_col = response_col if (response_col and response_col in data.columns) else None
+        if use_col:
+            vals = pd.to_numeric(data.loc[valid_mask, use_col], errors="coerce")
+            v_min, v_max = float(vals.min(skipna=True)), float(vals.max(skipna=True))
+            if v_max > v_min:
+                site_cmap = cm.linear.BuPu_09.scale(v_min, v_max)
+            else:
+                site_cmap = None
+        else:
+            site_cmap = None
+
+        fg = folium.FeatureGroup(name="Sampling sites", show=True)
+        for idx in data.index[valid_mask]:
+            lat = float(lats[idx]); lon = float(lons[idx])
+            tip_parts = []
+            if "site_id" in data.columns:
+                tip_parts.append(f"Site: {data.at[idx, 'site_id']}")
+            if use_col:
+                v = data.at[idx, use_col]
+                tip_parts.append(f"{use_col}: {v}")
+                try:
+                    fill = site_cmap(float(v)) if site_cmap else "#e67e22"
+                except Exception:
+                    fill = "#e67e22"
+            else:
+                fill = "#e67e22"
+
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=6,
+                color="#333",
+                weight=1,
+                fill=True,
+                fill_color=fill,
+                fill_opacity=0.85,
+                tooltip="; ".join(tip_parts) if tip_parts else f"{lat:.4f}, {lon:.4f}",
+            ).add_to(fg)
+        fg.add_to(m)
+
     # ── SDM: map output ──────────────────────────────────────────────────────
 
     @output
@@ -3218,10 +3301,25 @@ def server(input, output, session):
         cov = sdm_covariates.get()
         grid = generated_grid.get()
 
+        # ── No model yet: show sampling sites if available ───────────────────
         if res is None or cov is None:
-            center = [54.0, 21.0]
-            m = folium.Map(location=center, zoom_start=5, tiles="CartoDB positron")
-            folium.Marker(center, popup="Fit the SDM model first.").add_to(m)
+            data, lat_col, lon_col = _get_sdm_sample_df()
+            if data is not None and lat_col in data.columns and lon_col in data.columns:
+                lats = pd.to_numeric(data[lat_col], errors="coerce").dropna()
+                lons = pd.to_numeric(data[lon_col], errors="coerce").dropna()
+                if len(lats) > 0:
+                    center = [float(lats.median()), float(lons.median())]
+                    zoom = 7
+                else:
+                    center = [54.0, 21.0]; zoom = 5
+            else:
+                center = [54.0, 21.0]; zoom = 5
+            m = folium.Map(location=center, zoom_start=zoom, tiles="CartoDB positron")
+            folium.plugins.Fullscreen(position="topright").add_to(m)
+            _add_sdm_sample_sites(m)
+            folium.LayerControl().add_to(m)
+            if res is None:
+                folium.Marker(center, popup="Fit the SDM model to see predictions.").add_to(m)
             return ui.HTML(m._repr_html_())
 
         predictions = res["predictions"]
@@ -3260,6 +3358,8 @@ def server(input, output, session):
             ),
             name=f"SDM — {response_col}",
         ).add_to(m)
+
+        _add_sdm_sample_sites(m, response_col=response_col)
 
         folium.LayerControl().add_to(m)
         return ui.HTML(m._repr_html_())
@@ -3346,6 +3446,8 @@ def server(input, output, session):
             ),
             name="Prediction uncertainty",
         ).add_to(m)
+
+        _add_sdm_sample_sites(m)
 
         folium.LayerControl().add_to(m)
         return ui.HTML(m._repr_html_())
