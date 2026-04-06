@@ -544,8 +544,8 @@ def server(input, output, session):
         try:
             # Generate raw grid first to get pre-clip count, then clip to sea
             grid_raw = eva_hexgrid.generate_h3_grid(boundary, resolution, clip_to_sea=False)
-            grid = eva_hexgrid._clip_grid_to_sea(grid_raw, eva_hexgrid._load_land_mask()) \
-                if eva_hexgrid._load_land_mask() is not None else grid_raw
+            land = eva_hexgrid._get_best_land_mask(grid_raw.total_bounds)
+            grid = eva_hexgrid._clip_grid_to_sea(grid_raw, land) if land is not None else grid_raw
             if len(grid) == 0:
                 ui.notification_show("All hexagons fall on land. Please draw a marine area.", type="error", duration=6)
                 return
