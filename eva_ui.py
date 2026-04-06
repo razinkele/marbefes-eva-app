@@ -1152,49 +1152,68 @@ app_ui = ui.page_fluid(
                 ui.accordion(
                     ui.accordion_panel(
                         "1. Define Study Area",
-                        ui.p(
-                            "The study area is the marine polygon within which the hexagonal grid will be generated. "
-                            "Land areas are automatically removed from the grid.",
-                            style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
-                        ),
-                        ui.input_radio_buttons(
-                            "polygon_source",
-                            "Polygon source:",
-                            choices={"upload": "Upload boundary file", "draw": "Draw on map"},
-                            selected="upload",
+                        ui.tooltip(
+                            ui.input_select(
+                                "bbt_coverage",
+                                "BBT Coverage:",
+                                choices={"": "— Custom (upload / draw) —",
+                                    "Archipelago":    "Archipelago Sea (Finland)",
+                                    "Balearic":       "Balearic Sea (Spain)",
+                                    "Bay_of_Gdansk":  "Bay of Gdańsk (Poland)",
+                                    "BayOfBiscay":    "Bay of Biscay (Spain)",
+                                    "Heraklion":      "Heraklion (Greece / Crete)",
+                                    "Hornsund":       "Hornsund (Svalbard, Norway)",
+                                    "Irish_sea":      "Irish Sea (UK/Ireland)",
+                                    "Kongsfiord":     "Kongsfjord (Svalbard, Norway)",
+                                    "Lithuanian":     "Lithuanian Coast (Baltic Sea)",
+                                    "North_Sea":      "North Sea (Belgium/Netherlands)",
+                                    "Porsangerfjord": "Porsangerfjord (Norway)",
+                                    "Sardinia":       "Sardinia / Gulf of Oristano (Italy)",
+                                },
+                                selected="",
+                            ),
+                            "Select a MARBEFES Biodiversity Benchmark Territory (BBT) to use as the study area boundary, "
+                            "or choose Custom to upload your own polygon or draw it on the map.",
+                            placement="right",
                         ),
                         ui.panel_conditional(
-                            "input.polygon_source === 'upload'",
-                            ui.input_file(
-                                "upload_boundary",
-                                "Choose Boundary File",
-                                accept=[".geojson", ".json", ".zip", ".gpkg"],
-                                multiple=False,
-                                button_label="Browse...",
+                            "input.bbt_coverage === ''",
+                            ui.tooltip(
+                                ui.input_radio_buttons(
+                                    "polygon_source",
+                                    "Polygon source:",
+                                    choices={"upload": "Upload boundary file", "draw": "Draw on map"},
+                                    selected="upload",
+                                ),
+                                "Upload a polygon file or draw a shape on the map to define the study area.",
+                                placement="right",
                             ),
-                            ui.p(
-                                "Supported: GeoJSON (.geojson/.json), Zipped Shapefile (.zip), GeoPackage (.gpkg). "
-                                "Files must be in WGS84 (EPSG:4326) or will be reprojected automatically.",
-                                style="font-size: 0.8rem; color: #6c757d; margin-top: 0.3rem;",
+                            ui.panel_conditional(
+                                "input.polygon_source === 'upload'",
+                                ui.tooltip(
+                                    ui.input_file(
+                                        "upload_boundary",
+                                        "Choose Boundary File",
+                                        accept=[".geojson", ".json", ".zip", ".gpkg"],
+                                        multiple=False,
+                                        button_label="Browse...",
+                                    ),
+                                    "Supported formats: GeoJSON (.geojson/.json), Zipped Shapefile (.zip), "
+                                    "GeoPackage (.gpkg). Any CRS is accepted — files are reprojected to WGS84 automatically.",
+                                    placement="right",
+                                ),
                             ),
-                        ),
-                        ui.panel_conditional(
-                            "input.polygon_source === 'draw'",
-                            ui.p(
-                                "Use the ◻ rectangle or ⬠ polygon draw tools on the map to outline your study area. "
-                                "You can edit or delete shapes after drawing. "
-                                "Only the last drawn shape is used.",
-                                style="font-size: 0.8rem; color: #6c757d; margin-top: 0.5rem;",
+                            ui.panel_conditional(
+                                "input.polygon_source === 'draw'",
+                                ui.p(
+                                    "Use the ◻ rectangle or ⬠ polygon draw tools on the map.",
+                                    style="font-size: 0.8rem; color: #6c757d; margin-top: 0.4rem;",
+                                ),
                             ),
                         ),
                     ),
                     ui.accordion_panel(
                         "2. Grid Parameters",
-                        ui.p(
-                            "Select the hexagon size based on the Ecosystem Component (EC) you are assessing. "
-                            "Smaller cells capture fine-scale benthic patterns; larger cells suit mobile species.",
-                            style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
-                        ),
                         ui.tooltip(
                             ui.input_select(
                                 "hex_preset",
@@ -1202,22 +1221,10 @@ app_ui = ui.page_fluid(
                                 choices={k: v["label"] for k, v in HEX_PRESETS.items()},
                                 selected="mobile",
                             ),
-                            "Inner diameter (flat-to-flat width) of each hexagon, "
-                            "measured as twice the apothem per EVA guidance FAQ.",
+                            "EVA Guidance Table 2.1 — ~250 m: benthic ECs (macrobenthos, epibenthos, habitats); "
+                            "~3 km: mobile ECs (seabirds, fish, mammals, plankton). "
+                            "Nest smaller grids inside larger ones when combining ECs.",
                             placement="right",
-                        ),
-                        ui.div(
-                            ui.HTML(
-                                "<b>📖 EVA Guidance Table 2.1</b><br>"
-                                "<b>~250 m</b> → Benthic ECs: macrobenthos, epibenthos, benthic habitats (fine-scale)<br>"
-                                "<b>~3 km</b> → Mobile ECs: seabirds, fish, marine mammals, plankton<br>"
-                                "<i>Nest smaller grids inside larger ones when combining ECs.</i>"
-                            ),
-                            style=(
-                                "font-size: 0.78rem; color: #555; background: #f0f7ff; "
-                                "border-left: 3px solid #006994; border-radius: 4px; "
-                                "padding: 0.5rem 0.6rem; margin-top: 0.5rem;"
-                            ),
                         ),
                     ),
                     ui.accordion_panel(
@@ -1250,14 +1257,9 @@ app_ui = ui.page_fluid(
                                 class_="btn-success",
                                 style="width: 100%;",
                             ),
-                            "Load this grid into the EVA pipeline as your spatial assessment units (subzones). "
-                            "Proceed to the Data Input tab to upload EC data matched to the Subzone IDs.",
+                            "Load this grid into the EVA pipeline as spatial assessment units (subzones). "
+                            "Then go to Data Input and upload a CSV with a 'Subzone ID' column matching the grid cell IDs (HEX_001, HEX_002, …).",
                             placement="right",
-                        ),
-                        ui.p(
-                            "💡 After clicking 'Use This Grid', go to the Data Input tab and upload a CSV "
-                            "with a 'Subzone ID' column matching the grid cell IDs (HEX_001, HEX_002, …).",
-                            style="font-size: 0.78rem; color: #6c757d; margin-top: 0.6rem;",
                         ),
                     ),
                     ui.accordion_panel(

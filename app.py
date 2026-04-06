@@ -390,6 +390,29 @@ def server(input, output, session):
     # --- Grid Setup handlers ---
 
     @reactive.Effect
+    @reactive.event(input.bbt_coverage)
+    def handle_bbt_coverage_select():
+        name = (input.bbt_coverage() or "").strip()
+        if not name:
+            return
+        import pathlib
+        bbt_path = pathlib.Path(__file__).parent / "data" / "bbt_coverages.geojson"
+        if not bbt_path.exists():
+            ui.notification_show("BBT coverage file not found.", type="error", duration=6)
+            return
+        try:
+            gdf = gpd.read_file(str(bbt_path))
+            row = gdf[gdf["Name"] == name]
+            if row.empty:
+                ui.notification_show(f"BBT '{name}' not found.", type="warning", duration=5)
+                return
+            boundary_polygon.set(row.to_crs(epsg=4326))
+            generated_grid.set(None)
+            ui.notification_show(f"BBT boundary loaded: {name}", type="message", duration=4)
+        except Exception as exc:
+            ui.notification_show(f"Failed to load BBT coverage: {exc}", type="error", duration=8)
+
+    @reactive.Effect
     @reactive.event(input.upload_boundary)
     def handle_boundary_upload():
         file_info = input.upload_boundary()
