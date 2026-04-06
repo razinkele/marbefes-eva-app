@@ -958,76 +958,80 @@ app_ui = ui.page_fluid(
                     "input.navigation === 'nav_grid'",
         ui.layout_sidebar(
             ui.sidebar(
-                ui.div(
-                    ui.h5("1. Define Study Area", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
-                    ui.p(
-                        "The study area is the marine polygon within which the hexagonal grid will be generated. "
-                        "Land areas are automatically removed from the grid.",
-                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
-                    ),
-                    ui.input_radio_buttons(
-                        "polygon_source",
-                        "Polygon source:",
-                        choices={"upload": "Upload boundary file", "draw": "Draw on map"},
-                        selected="upload",
-                    ),
-                    ui.panel_conditional(
-                        "input.polygon_source === 'upload'",
-                        ui.input_file(
-                            "upload_boundary",
-                            "Choose Boundary File",
-                            accept=[".geojson", ".json", ".zip", ".gpkg"],
-                            multiple=False,
-                            button_label="Browse...",
-                        ),
+                ui.accordion(
+                    ui.accordion_panel(
+                        "1. Define Study Area",
                         ui.p(
-                            "Supported: GeoJSON (.geojson/.json), Zipped Shapefile (.zip), GeoPackage (.gpkg). "
-                            "Files must be in WGS84 (EPSG:4326) or will be reprojected automatically.",
-                            style="font-size: 0.8rem; color: #6c757d; margin-top: 0.3rem;",
+                            "The study area is the marine polygon within which the hexagonal grid will be generated. "
+                            "Land areas are automatically removed from the grid.",
+                            style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                        ),
+                        ui.input_radio_buttons(
+                            "polygon_source",
+                            "Polygon source:",
+                            choices={"upload": "Upload boundary file", "draw": "Draw on map"},
+                            selected="upload",
+                        ),
+                        ui.panel_conditional(
+                            "input.polygon_source === 'upload'",
+                            ui.input_file(
+                                "upload_boundary",
+                                "Choose Boundary File",
+                                accept=[".geojson", ".json", ".zip", ".gpkg"],
+                                multiple=False,
+                                button_label="Browse...",
+                            ),
+                            ui.p(
+                                "Supported: GeoJSON (.geojson/.json), Zipped Shapefile (.zip), GeoPackage (.gpkg). "
+                                "Files must be in WGS84 (EPSG:4326) or will be reprojected automatically.",
+                                style="font-size: 0.8rem; color: #6c757d; margin-top: 0.3rem;",
+                            ),
+                        ),
+                        ui.panel_conditional(
+                            "input.polygon_source === 'draw'",
+                            ui.p(
+                                "Use the ◻ rectangle or ⬠ polygon draw tools on the map to outline your study area. "
+                                "You can edit or delete shapes after drawing. "
+                                "Only the last drawn shape is used.",
+                                style="font-size: 0.8rem; color: #6c757d; margin-top: 0.5rem;",
+                            ),
                         ),
                     ),
-                    ui.panel_conditional(
-                        "input.polygon_source === 'draw'",
+                    ui.accordion_panel(
+                        "2. Grid Parameters",
                         ui.p(
-                            "Use the ◻ rectangle or ⬠ polygon draw tools on the map to outline your study area. "
-                            "You can edit or delete shapes after drawing. "
-                            "Only the last drawn shape is used.",
-                            style="font-size: 0.8rem; color: #6c757d; margin-top: 0.5rem;",
+                            "Select the hexagon size based on the Ecosystem Component (EC) you are assessing. "
+                            "Smaller cells capture fine-scale benthic patterns; larger cells suit mobile species.",
+                            style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                        ),
+                        ui.tooltip(
+                            ui.input_select(
+                                "hex_preset",
+                                "Hexagon size:",
+                                choices={k: v["label"] for k, v in HEX_PRESETS.items()},
+                                selected="mobile",
+                            ),
+                            "Inner diameter (flat-to-flat width) of each hexagon, "
+                            "measured as twice the apothem per EVA guidance FAQ.",
+                            placement="right",
+                        ),
+                        ui.div(
+                            ui.HTML(
+                                "<b>📖 EVA Guidance Table 2.1</b><br>"
+                                "<b>~250 m</b> → Benthic ECs: macrobenthos, epibenthos, benthic habitats (fine-scale)<br>"
+                                "<b>~3 km</b> → Mobile ECs: seabirds, fish, marine mammals, plankton<br>"
+                                "<i>Nest smaller grids inside larger ones when combining ECs.</i>"
+                            ),
+                            style=(
+                                "font-size: 0.78rem; color: #555; background: #f0f7ff; "
+                                "border-left: 3px solid #006994; border-radius: 4px; "
+                                "padding: 0.5rem 0.6rem; margin-top: 0.5rem;"
+                            ),
                         ),
                     ),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("2. Grid Parameters", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
-                    ui.p(
-                        "Select the hexagon size based on the Ecosystem Component (EC) you are assessing. "
-                        "Smaller cells capture fine-scale benthic patterns; larger cells suit mobile species.",
-                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
-                    ),
-                    ui.tooltip(
-                        ui.input_select(
-                            "hex_preset",
-                            "Hexagon size:",
-                            choices={k: v["label"] for k, v in HEX_PRESETS.items()},
-                            selected="mobile",
-                        ),
-                        "Inner diameter (flat-to-flat width) of each hexagon, "
-                        "measured as twice the apothem per EVA guidance FAQ.",
-                        placement="right",
-                    ),
-                    ui.div(
-                        ui.HTML(
-                            "<b>📖 EVA Guidance Table 2.1</b><br>"
-                            "<b>~250 m</b> → Benthic ECs: macrobenthos, epibenthos, benthic habitats (fine-scale)<br>"
-                            "<b>~3 km</b> → Mobile ECs: seabirds, fish, marine mammals, plankton<br>"
-                            "<i>Nest smaller grids inside larger ones when combining ECs.</i>"
-                        ),
-                        style=(
-                            "font-size: 0.78rem; color: #555; background: #f0f7ff; "
-                            "border-left: 3px solid #006994; border-radius: 4px; "
-                            "padding: 0.5rem 0.6rem; margin-top: 0.5rem;"
-                        ),
-                    ),
+                    id="grid_setup_accordion",
+                    open=["1. Define Study Area", "2. Grid Parameters"],
+                    multiple=True,
                 ),
                 ui.hr(),
                 ui.div(
