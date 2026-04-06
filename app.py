@@ -381,7 +381,11 @@ def server(input, output, session):
     def draw_map_output():
         import folium
         import folium.plugins
+        from branca.element import MacroElement, Template
         m = folium.Map(location=[55.7, 21.1], zoom_start=10, tiles="OpenStreetMap")
+        # Create the draw feature group and draw control
+        draw_fg = folium.FeatureGroup(name="drawn_items")
+        draw_fg.add_to(m)
         draw = folium.plugins.Draw(
             draw_options={
                 "polyline": False,
@@ -391,39 +395,52 @@ def server(input, output, session):
                 "marker": False,
                 "circlemarker": False,
             },
-            edit_options={"edit": True, "remove": True},
+            edit_options={"edit": True, "remove": True, "featureGroup": "placeholder"},
         )
         draw.add_to(m)
-        # JavaScript to capture drawn shapes and send to Shiny
-        js = """
-        <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            var checkMap = setInterval(function() {
-                var mapEl = document.querySelector('.folium-map');
-                if (mapEl && mapEl._leaflet_map) {
-                    var map = mapEl._leaflet_map;
-                    var drawnItems = new L.FeatureGroup();
-                    map.eachLayer(function(layer) {
-                        if (layer instanceof L.FeatureGroup) {
-                            drawnItems = layer;
-                        }
-                    });
-                    map.on('draw:created', function(e) {
-                        var geojson = JSON.stringify(drawnItems.toGeoJSON());
-                        Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
-                    });
-                    map.on('draw:edited', function(e) {
-                        var geojson = JSON.stringify(drawnItems.toGeoJSON());
-                        Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
-                    });
-                    clearInterval(checkMap);
-                }
-            }, 500);
-        });
-        </script>
-        """
+        # Inject JS into the Folium map to capture drawn shapes and post to parent
+        js_bridge = MacroElement()
+        js_bridge._template = Template("""
+            {% macro script(this, kwargs) %}
+            (function(){
+                var map = {{ this._parent.get_name() }};
+                var drawnItems = new L.FeatureGroup();
+                map.addLayer(drawnItems);
+
+                // Override the draw control's featureGroup
+                map.eachLayer(function(layer) {
+                    if (layer.options && layer.options.draw) {
+                        layer.options.edit = layer.options.edit || {};
+                        layer.options.edit.featureGroup = drawnItems;
+                    }
+                });
+
+                map.on(L.Draw.Event.CREATED, function(e) {
+                    drawnItems.addLayer(e.layer);
+                    var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                    // Post to parent Shiny app (Folium renders in an iframe)
+                    if (window.parent && window.parent.Shiny) {
+                        window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                    }
+                });
+                map.on(L.Draw.Event.EDITED, function(e) {
+                    var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                    if (window.parent && window.parent.Shiny) {
+                        window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                    }
+                });
+                map.on(L.Draw.Event.DELETED, function(e) {
+                    var geojson = JSON.stringify(drawnItems.toGeoJSON());
+                    if (window.parent && window.parent.Shiny) {
+                        window.parent.Shiny.setInputValue('drawn_polygon', geojson, {priority: 'event'});
+                    }
+                });
+            })();
+            {% endmacro %}
+        """)
+        js_bridge.add_to(m)
         map_html = m._repr_html_()
-        return ui.HTML(f'<div style="height: 400px;">{map_html}</div>{js}')
+        return ui.HTML(f'<div style="height: 500px;">{map_html}</div>')
 
     @reactive.Effect
     @reactive.event(input.drawn_polygon)
@@ -462,7 +479,11 @@ def server(input, output, session):
                 type="warning", duration=8,
             )
         generated_grid.set(grid)
-        ui.notification_show(f"Grid generated: {len(grid)} hexagonal cells", type="message", duration=4)
+        # Auto-load into the map pipeline so the Map tab shows it immediately
+        geo_data.set(grid[["Subzone ID", "geometry"]])
+        geo_data_full.set(grid.copy())
+        original_crs.set("EPSG:4326 (WGS84)")
+        ui.notification_show(f"Grid generated: {len(grid)} hexagonal cells — visible on Map tab", type="message", duration=5)
 
     @output
     @render.ui
@@ -654,6 +675,29 @@ def server(input, output, session):
         logger.info(f"GeoJSON loaded: {len(gdf)} features, CRS: {original_crs.get()}")
 
     # GeoJSON spatial preview
+    def _render_unmatched_ids(match_info: dict) -> ui.Tag | None:
+        """Return a <details> widget listing CSV-only and GeoJSON-only IDs, or None."""
+        if not (match_info.get('csv_only_ids') or match_info.get('geo_only_ids')):
+            return None
+        unmatched_items = []
+        if match_info.get('csv_only_ids'):
+            unmatched_items.append(ui.p(
+                f"CSV-only IDs: {', '.join(str(x) for x in match_info['csv_only_ids'])}",
+                style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
+            ))
+        if match_info.get('geo_only_ids'):
+            unmatched_items.append(ui.p(
+                f"GeoJSON-only IDs: {', '.join(str(x) for x in match_info['geo_only_ids'])}",
+                style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
+            ))
+        return ui.div(
+            ui.tags.details(
+                ui.tags.summary("Show unmatched IDs"),
+                *unmatched_items
+            ),
+            style="margin-top: 0.5rem;"
+        )
+
     @output
     @render.ui
     def geo_preview_ui():
@@ -692,53 +736,18 @@ def server(input, output, session):
 
             items.append(ui.p(match_text, style=match_style))
 
-            # Show unmatched IDs if any
-            if match_info.get('csv_only_ids') or match_info.get('geo_only_ids'):
-                unmatched_items = []
-                if match_info.get('csv_only_ids'):
-                    unmatched_items.append(ui.p(
-                        f"CSV-only IDs: {', '.join(str(x) for x in match_info['csv_only_ids'])}",
-                        style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
-                    ))
-                if match_info.get('geo_only_ids'):
-                    unmatched_items.append(ui.p(
-                        f"GeoJSON-only IDs: {', '.join(str(x) for x in match_info['geo_only_ids'])}",
-                        style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
-                    ))
-                items.append(ui.div(
-                    ui.tags.details(
-                        ui.tags.summary("Show unmatched IDs"),
-                        *unmatched_items
-                    ),
-                    style="margin-top: 0.5rem;"
-                ))
+            unmatched_widget = _render_unmatched_ids(match_info)
+            if unmatched_widget:
+                items.append(unmatched_widget)
         elif match_info:
             # No matched IDs — could be no CSV uploaded or truly zero matches
             if match_info.get('matched', 0) == 0 and (match_info.get('csv_only', 0) > 0 or match_info.get('geo_only', 0) > 0):
                 match_style = "color: #d32f2f; font-weight: 600;"
                 match_text = "🔴 No matching Subzone IDs found"
                 items.append(ui.p(match_text, style=match_style))
-
-                # Show unmatched IDs if any
-                if match_info.get('csv_only_ids') or match_info.get('geo_only_ids'):
-                    unmatched_items = []
-                    if match_info.get('csv_only_ids'):
-                        unmatched_items.append(ui.p(
-                            f"CSV-only IDs: {', '.join(str(x) for x in match_info['csv_only_ids'])}",
-                            style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
-                        ))
-                    if match_info.get('geo_only_ids'):
-                        unmatched_items.append(ui.p(
-                            f"GeoJSON-only IDs: {', '.join(str(x) for x in match_info['geo_only_ids'])}",
-                            style="color: #6c757d; font-size: 0.85rem; margin: 0.3rem 0;"
-                        ))
-                    items.append(ui.div(
-                        ui.tags.details(
-                            ui.tags.summary("Show unmatched IDs"),
-                            *unmatched_items
-                        ),
-                        style="margin-top: 0.5rem;"
-                    ))
+                unmatched_widget = _render_unmatched_ids(match_info)
+                if unmatched_widget:
+                    items.append(unmatched_widget)
             else:
                 items.append(ui.p("⚠️ Upload CSV data to see match status",
                                   style="color: #ff9800; font-weight: 600;"))
@@ -1445,8 +1454,8 @@ def server(input, output, session):
             overlay = eunis_overlay.get()
             if overlay is not None:
                 eunis_data_for_export = overlay[["Subzone_ID", "dominant_EUNIS", "dominant_EUNIS_name"]].copy()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Could not fetch EUNIS overlay for export: %s", e)
 
         return eva_export.generate_workbook(
             results=calculate_results(),
@@ -1700,11 +1709,10 @@ def server(input, output, session):
             return ui.HTML(map_html)
 
         if results is None:
+            map_html = eva_map.create_grid_only_map(gdf, basemap_name=input.map_basemap())
             return ui.div(
-                ui.p(
-                    "⚠️ Calculate EVA results first (upload CSV and select data type) to see values on the map.",
-                    style="text-align: center; color: #ff9800; font-size: 1.1rem; padding: 3rem;"
-                )
+                ui.HTML(map_html),
+                style="height: 600px; width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid #dee2e6;"
             )
 
         try:

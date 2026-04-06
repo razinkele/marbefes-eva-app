@@ -1,10 +1,10 @@
-# MARBEFES EVA v3.0.0
+# MARBEFES EVA v3.6.0
 
 Ecological Value Assessment (EVA) web application for the [MARBEFES](https://marbefes.eu/) project, funded by the European Union's Horizon Europe Research Programme.
 
 EVA is a framework for evaluating the ecological value of marine areas by scoring ecosystem components (species or habitats) across spatial subzones using 15 standardised Assessment Questions (AQ1-AQ15), producing an Ecological Value (EV) score on a 0-5 scale.
 
-**Current version:** 3.0.0 "Physical Accounts" (2026-03-16) | [Changelog](CHANGELOG.md) | [User Manual](docs/USER_MANUAL.md)
+**Current version:** 3.6.0 "Production Ready" (2026-03-18) | [Changelog](CHANGELOG.md) | [User Manual](docs/USER_MANUAL.md)
 
 ## Features
 
