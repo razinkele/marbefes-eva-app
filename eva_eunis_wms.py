@@ -1,7 +1,13 @@
-"""Extract EUNIS Level 3 habitat codes from EMODnet EuSEAMAP 2025 WMS.
+"""Extract SDM covariate layers from EMODnet services for hexagonal grids.
 
-Uses WMS GetMap PNG centroid-sampling for rapid hex grid annotation.
-Also supports custom habitat polygon layers via spatial intersection.
+Layers supported:
+  - EuSEAMAP 2025 (WMS PNG sampling): EUNIS L3, substrate type, energy class,
+    biological zone, HELCOM HUB classification
+  - EMODnet Bathymetry (WCS float32 GeoTIFF + rasterio): water depth
+  - Custom habitat maps (polygon intersection)
+
+All EuSEAMAP layers share the same GeoServer WMS, so tiles are cached across
+layers within a single fetch_sdm_covariates() call.
 """
 import io
 import json
@@ -20,31 +26,79 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 
+# ── EMODnet Seabed Habitats WMS ───────────────────────────────────────────────
 EUSM_WMS_URL = "https://ows.emodnet-seabedhabitats.eu/geoserver/emodnet_view/wms"
-EUSM_LAYER = "eusm2025_eunis2007_full"
 
-# Max tile side (degrees) — keeps WMS scale denominator in acceptable range
+# Available EuSEAMAP 2025 layers with column naming and labels
+EUSM_LAYERS: dict = {
+    "eunis2007": {
+        "wms_layer": "eusm2025_eunis2007_full",
+        "col": "dominant_EUNIS",
+        "name_col": "dominant_EUNIS_name",
+        "label": "EUNIS 2007 L3 Habitat",
+    },
+    "substrate": {
+        "wms_layer": "eusm2025_subs_full",
+        "col": "substrate_type",
+        "name_col": "substrate_type_name",
+        "label": "Seabed Substrate Type",
+    },
+    "energy": {
+        "wms_layer": "eusm2025_ene_full",
+        "col": "energy_class",
+        "name_col": "energy_class_name",
+        "label": "Energy Class (wave/current exposure)",
+    },
+    "biozone": {
+        "wms_layer": "eusm2025_bio_full",
+        "col": "bio_zone",
+        "name_col": "bio_zone_name",
+        "label": "Biological Zone",
+    },
+    "helcom": {
+        "wms_layer": "eusm2025_helcom_full",
+        "col": "helcom_class",
+        "name_col": "helcom_class_name",
+        "label": "HELCOM HUB Class (Baltic)",
+    },
+}
+
+# Backward-compat alias used by existing code
+EUSM_LAYER = EUSM_LAYERS["eunis2007"]["wms_layer"]
+
+# ── EMODnet Bathymetry ────────────────────────────────────────────────────────
+EMODNET_BATHY_WCS = "https://ows.emodnet-bathymetry.eu/wcs"
+BATHY_COVERAGE = "emodnet:mean"
+
+# ── Shared HTTP / tile settings ───────────────────────────────────────────────
 _MAX_TILE_DEG = 2.0
-# WMS tile pixel size
 _TILE_PX = 1024
 
 _SSL_CTX = ssl.create_default_context()
 _SSL_CTX.check_hostname = False
 _SSL_CTX.verify_mode = ssl.CERT_NONE
 
-# Module-level legend cache: {(R, G, B): (eunis_code, eunis_name)}
+# Per-layer legend caches: {wms_layer_name: {(R,G,B): (code, name)}}
+_legend_caches: dict = {}
+
+# Backward-compat single-legend alias (eunis2007 layer)
 _legend_cache: Optional[dict] = None
 
 
-def _build_legend() -> dict:
-    """Download EuSEAMAP WMS legend and build colour → EUNIS code/name lookup."""
-    global _legend_cache
-    if _legend_cache is not None:
-        return _legend_cache
+# ── Legend building ───────────────────────────────────────────────────────────
+
+def _build_layer_legend(wms_layer: str) -> dict:
+    """Download GetLegendGraphic JSON for *wms_layer* and build {(R,G,B):(code,name)}.
+
+    Supports all EuSEAMAP filter attribute names (euniscomb, substrate, energy,
+    biozone, regionald) via a generic `= '...'` pattern.
+    """
+    if wms_layer in _legend_caches:
+        return _legend_caches[wms_layer]
 
     params = {
         "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetLegendGraphic",
-        "LAYER": EUSM_LAYER, "FORMAT": "application/json",
+        "LAYER": wms_layer, "FORMAT": "application/json",
     }
     url = EUSM_WMS_URL + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "MARBEFES-EVA/1.0"})
@@ -52,34 +106,48 @@ def _build_legend() -> dict:
         raw = urllib.request.urlopen(req, context=_SSL_CTX, timeout=20).read()
         legend_data = json.loads(raw)
     except Exception as exc:
-        raise RuntimeError(f"Cannot fetch EuSEAMAP WMS legend: {exc}") from exc
+        raise RuntimeError(f"Cannot fetch WMS legend for {wms_layer}: {exc}") from exc
 
     rules = legend_data.get("Legend", [{}])[0].get("rules", [])
     color_map: dict = {}
     for rule in rules:
-        m = re.search(r"euniscomb = '([^']+)'", rule.get("filter", ""))
+        # Generic: extract value after any `attr = 'value'` pattern
+        m = re.search(r"= '([^']+)'", rule.get("filter", ""))
         if not m:
             continue
         code = m.group(1)
         title = rule.get("title", "")
-        name = title.split(":", 1)[1].strip() if ":" in title else title
+        # For EUNIS codes like "A5.27: Deep circalittoral sand" split to get name
+        name = title.split(":", 1)[1].strip() if ":" in title and not title.startswith("AA.") else title
         for sym in rule.get("symbolizers", []):
-            poly = sym.get("Polygon", {})
-            fill = poly.get("fill", "")
+            fill = sym.get("Polygon", {}).get("fill", "")
             if fill and len(fill) == 7 and fill.startswith("#"):
                 rgb = (int(fill[1:3], 16), int(fill[3:5], 16), int(fill[5:7], 16))
                 color_map[rgb] = (code, name)
 
-    _legend_cache = color_map
-    logger.info("EuSEAMAP legend loaded: %d EUNIS colour entries", len(color_map))
+    _legend_caches[wms_layer] = color_map
+    logger.info("Legend loaded for %s: %d colour entries", wms_layer, len(color_map))
     return color_map
 
 
-def _fetch_wms_tile(lon0: float, lat0: float, lon1: float, lat1: float) -> np.ndarray:
+def _build_legend() -> dict:
+    """Backward-compatible legend builder for EUNIS 2007 layer."""
+    global _legend_cache
+    if _legend_cache is None:
+        _legend_cache = _build_layer_legend(EUSM_LAYERS["eunis2007"]["wms_layer"])
+    return _legend_cache
+
+
+# ── WMS tile fetching / sampling ──────────────────────────────────────────────
+
+def _fetch_wms_tile(
+    lon0: float, lat0: float, lon1: float, lat1: float,
+    wms_layer: str = EUSM_LAYER,
+) -> np.ndarray:
     """Fetch one WMS GetMap PNG tile; return RGBA numpy array (H × W × 4, uint8)."""
     params = {
         "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
-        "LAYERS": EUSM_LAYER, "STYLES": "",
+        "LAYERS": wms_layer, "STYLES": "",
         "FORMAT": "image/png", "TRANSPARENT": "true",
         "WIDTH": str(_TILE_PX), "HEIGHT": str(_TILE_PX),
         "CRS": "CRS:84",
@@ -90,15 +158,20 @@ def _fetch_wms_tile(lon0: float, lat0: float, lon1: float, lat1: float) -> np.nd
     try:
         raw = urllib.request.urlopen(req, context=_SSL_CTX, timeout=30).read()
     except Exception as exc:
-        raise RuntimeError(f"WMS tile request failed ({lon0},{lat0},{lon1},{lat1}): {exc}") from exc
+        raise RuntimeError(
+            f"WMS tile failed for {wms_layer} ({lon0},{lat0},{lon1},{lat1}): {exc}"
+        ) from exc
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
     return np.array(img)
 
 
-def _sample_tile(arr: np.ndarray, lon: float, lat: float,
-                 tile_lon0: float, tile_lat0: float,
-                 tile_lon1: float, tile_lat1: float) -> tuple:
-    """Return (r, g, b, alpha) for a geographic point within a loaded tile."""
+def _sample_tile(
+    arr: np.ndarray,
+    lon: float, lat: float,
+    tile_lon0: float, tile_lat0: float,
+    tile_lon1: float, tile_lat1: float,
+) -> tuple:
+    """Return (r, g, b, alpha) for a geographic point within a loaded tile array."""
     H, W = arr.shape[:2]
     col_px = int((lon - tile_lon0) / (tile_lon1 - tile_lon0) * W)
     row_px = int((tile_lat1 - lat) / (tile_lat1 - tile_lat0) * H)
@@ -107,90 +180,264 @@ def _sample_tile(arr: np.ndarray, lon: float, lat: float,
     return tuple(int(v) for v in arr[row_px, col_px])
 
 
-def fetch_eunis_for_grid(
-    grid_gdf: gpd.GeoDataFrame,
-    progress_cb: Optional[Callable[[int, int], None]] = None,
-) -> gpd.GeoDataFrame:
-    """Sample EuSEAMAP 2025 WMS at each hexagon centroid to assign EUNIS L3 codes.
+def _tile_key(lon: float, lat: float) -> tuple:
+    """Return the aligned 2°×2° tile origin for a point."""
+    tlon0 = math.floor(lon / _MAX_TILE_DEG) * _MAX_TILE_DEG
+    tlat0 = math.floor(lat / _MAX_TILE_DEG) * _MAX_TILE_DEG
+    return tlon0, tlat0, tlon0 + _MAX_TILE_DEG, tlat0 + _MAX_TILE_DEG
 
-    Tiles the study area into ≤ 2° × 2° WMS requests to avoid scale-denominator
-    transparency. Results are cached per tile so overlapping hexagons reuse tiles.
+
+def _sample_eusm_layer(
+    gdf: gpd.GeoDataFrame,
+    layer_key: str,
+    shared_tile_cache: Optional[dict] = None,
+) -> dict:
+    """Sample one EuSEAMAP layer at hex centroids.
 
     Args:
-        grid_gdf: GeoDataFrame with 'Subzone ID' (or 'Subzone_ID') + geometry, EPSG:4326.
-        progress_cb: Optional callback(n_done, total) called every 50 hexagons.
+        gdf: grid GDF in EPSG:4326 with id column.
+        layer_key: key in EUSM_LAYERS ('eunis2007', 'substrate', …).
+        shared_tile_cache: optional dict keyed by (wms_layer, tile_tuple) to
+            share tiles across multiple layer calls.
 
     Returns:
-        GeoDataFrame with columns Subzone_ID, dominant_EUNIS, dominant_EUNIS_name,
-        habitat_count, dominant_pct, coverage_pct, geometry. CRS = grid_gdf.crs.
+        dict {subzone_id: {'code': str, 'name': str}} for hexagons with data.
     """
-    legend = _build_legend()
+    config = EUSM_LAYERS[layer_key]
+    wms_layer = config["wms_layer"]
+    legend = _build_layer_legend(wms_layer)
+
+    if shared_tile_cache is None:
+        shared_tile_cache = {}
+
+    id_col = "Subzone ID" if "Subzone ID" in gdf.columns else "Subzone_ID"
+    centroids = gdf.geometry.centroid
+    result: dict = {}
+
+    for i, (_, row) in enumerate(gdf.iterrows()):
+        sid = row[id_col]
+        clon, clat = centroids.iloc[i].x, centroids.iloc[i].y
+        tile_bounds = _tile_key(clon, clat)
+        cache_key = (wms_layer,) + tile_bounds
+
+        if cache_key not in shared_tile_cache:
+            try:
+                shared_tile_cache[cache_key] = _fetch_wms_tile(*tile_bounds, wms_layer=wms_layer)
+            except Exception as exc:
+                logger.warning("WMS tile unavailable (%s, %s): %s", wms_layer, tile_bounds, exc)
+                shared_tile_cache[cache_key] = None
+
+        arr = shared_tile_cache[cache_key]
+        if arr is None:
+            continue
+
+        r, g, b, a = _sample_tile(arr, clon, clat, *tile_bounds)
+        if a < 128:
+            continue
+
+        code, name = legend.get((r, g, b), (None, None))
+        if code is not None:
+            result[sid] = {"code": code, "name": name}
+
+    n_with = len(result)
+    logger.info("%s: %d/%d hexagons annotated", layer_key, n_with, len(gdf))
+    return result
+
+
+# ── Depth via WCS ─────────────────────────────────────────────────────────────
+
+def fetch_depth_for_grid(grid_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Sample EMODnet Bathymetry WCS at each hexagon centroid for water depth.
+
+    Returns a GeoDataFrame with columns:
+        Subzone_ID, depth_m (positive = depth below sea surface; None = land), geometry.
+    Depth values > 0 from the WCS (i.e. elevation above sea level) are set to None.
+    """
+    import rasterio
+    from rasterio.io import MemoryFile
+
+    gdf = grid_gdf
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+
+    lon0, lat0, lon1, lat1 = gdf.total_bounds
+    buf = max(0.05, (lon1 - lon0) * 0.02)
+    bbox = (lon0 - buf, lat0 - buf, lon1 + buf, lat1 + buf)
+
+    params = {
+        "SERVICE": "WCS", "VERSION": "1.0.0", "REQUEST": "GetCoverage",
+        "COVERAGE": BATHY_COVERAGE,
+        "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+        "CRS": "EPSG:4326", "RESPONSE_CRS": "EPSG:4326",
+        "WIDTH": "1024", "HEIGHT": "1024",
+        "FORMAT": "GeoTIFF",
+    }
+    url = EMODNET_BATHY_WCS + "?" + urllib.parse.urlencode(params)
+    req = urllib.request.Request(url, headers={"User-Agent": "MARBEFES-EVA/1.0"})
+    try:
+        raw = urllib.request.urlopen(req, context=_SSL_CTX, timeout=45).read()
+    except Exception as exc:
+        raise RuntimeError(f"Bathymetry WCS request failed: {exc}") from exc
+
+    id_col = "Subzone ID" if "Subzone ID" in gdf.columns else "Subzone_ID"
+    centroids = gdf.geometry.centroid
+    coords = [(c.x, c.y) for c in centroids]
+
+    results = []
+    with MemoryFile(raw) as memfile:
+        with memfile.open() as dataset:
+            nodata = dataset.nodata
+            samples = list(dataset.sample(coords))
+
+    for i, (_, row) in enumerate(gdf.iterrows()):
+        sid = row[id_col]
+        val = float(samples[i][0])
+        # WCS returns negative values for below-sea-level; NaN/nodata → None
+        if nodata is not None and abs(val - nodata) < 1.0:
+            depth_m = None
+        elif val >= 0:
+            depth_m = None   # above sea level (land)
+        else:
+            depth_m = round(-val, 1)  # convert to positive depth
+        results.append({"Subzone_ID": sid, "depth_m": depth_m, "geometry": row.geometry})
+
+    logger.info(
+        "Bathymetry: %d/%d hexagons with depth data",
+        sum(1 for r in results if r["depth_m"] is not None), len(results),
+    )
+    return gpd.GeoDataFrame(results, crs=grid_gdf.crs)
+
+
+# ── Combined SDM covariates ───────────────────────────────────────────────────
+
+def fetch_sdm_covariates(
+    grid_gdf: gpd.GeoDataFrame,
+    layers: Optional[list] = None,
+    progress_cb: Optional[Callable[[str, int, int], None]] = None,
+) -> gpd.GeoDataFrame:
+    """Fetch multiple SDM predictor layers and return a combined GeoDataFrame.
+
+    Tiles are shared across EuSEAMAP layers to minimise HTTP requests.
+
+    Args:
+        grid_gdf: hex grid with 'Subzone ID' or 'Subzone_ID' column, EPSG:4326.
+        layers: list of layer keys to fetch. Valid keys:
+            'eunis2007', 'substrate', 'energy', 'biozone', 'helcom', 'depth'.
+            Default: all layers.
+        progress_cb: optional callback(layer_label, layer_index, total_layers).
+
+    Returns:
+        GeoDataFrame with Subzone_ID, geometry, and one or two columns per layer
+        (code + name for EuSEAMAP layers; depth_m for bathymetry).
+    """
+    if layers is None:
+        layers = list(EUSM_LAYERS.keys()) + ["depth"]
+    if not layers:
+        raise ValueError("layers must be a non-empty list. Provide at least one layer key.")
 
     gdf = grid_gdf
     if gdf.crs and gdf.crs.to_epsg() != 4326:
         gdf = gdf.to_crs(epsg=4326)
 
     id_col = "Subzone ID" if "Subzone ID" in gdf.columns else "Subzone_ID"
-    centroids = gdf.geometry.centroid
 
-    tile_cache: dict = {}
+    result = gpd.GeoDataFrame(
+        {"Subzone_ID": gdf[id_col].values, "geometry": gdf.geometry.values},
+        crs=gdf.crs,
+    )
 
-    def _get_tile(tlon0, tlat0, tlon1, tlat1):
-        key = (round(tlon0, 6), round(tlat0, 6), round(tlon1, 6), round(tlat1, 6))
-        if key not in tile_cache:
-            logger.debug("Fetching WMS tile: %s", key)
-            tile_cache[key] = _fetch_wms_tile(tlon0, tlat0, tlon1, tlat1)
-        return tile_cache[key]
+    shared_tile_cache: dict = {}
+    total = len(layers)
 
+    for i, layer_key in enumerate(layers):
+        if layer_key == "depth":
+            label = "Water depth (EMODnet Bathymetry)"
+        elif layer_key in EUSM_LAYERS:
+            label = EUSM_LAYERS[layer_key]["label"]
+        else:
+            logger.warning("Unknown layer key '%s', skipping.", layer_key)
+            continue
+
+        if progress_cb:
+            progress_cb(label, i, total)
+
+        if layer_key == "depth":
+            try:
+                depth_gdf = fetch_depth_for_grid(gdf)
+                depth_map = depth_gdf.set_index("Subzone_ID")["depth_m"]
+                result["depth_m"] = result["Subzone_ID"].map(depth_map)
+            except Exception as exc:
+                logger.warning("Depth fetch failed: %s", exc)
+                result["depth_m"] = None
+
+        elif layer_key in EUSM_LAYERS:
+            config = EUSM_LAYERS[layer_key]
+            try:
+                sampled = _sample_eusm_layer(gdf, layer_key, shared_tile_cache)
+                result[config["col"]] = result["Subzone_ID"].map(
+                    {sid: v["code"] for sid, v in sampled.items()}
+                )
+                result[config["name_col"]] = result["Subzone_ID"].map(
+                    {sid: v["name"] for sid, v in sampled.items()}
+                )
+            except Exception as exc:
+                logger.warning("Layer '%s' fetch failed: %s", layer_key, exc)
+                result[config["col"]] = None
+                result[config["name_col"]] = None
+
+    if progress_cb:
+        progress_cb("Done", total, total)
+
+    logger.info("SDM covariates done: %d hexagons, layers: %s", len(result), layers)
+    return result
+
+
+# ── Backward-compatible public API ───────────────────────────────────────────
+
+def fetch_eunis_for_grid(
+    grid_gdf: gpd.GeoDataFrame,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> gpd.GeoDataFrame:
+    """Sample EuSEAMAP 2025 WMS at each hexagon centroid for EUNIS L3 codes.
+
+    Backward-compatible wrapper around fetch_sdm_covariates(['eunis2007']).
+
+    Returns:
+        GeoDataFrame with Subzone_ID, dominant_EUNIS, dominant_EUNIS_name,
+        habitat_count, dominant_pct, coverage_pct, geometry.
+    """
+    gdf = grid_gdf
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(epsg=4326)
+
+    id_col = "Subzone ID" if "Subzone ID" in gdf.columns else "Subzone_ID"
+    shared: dict = {}
+
+    def _prog(label, idx, total):
+        if progress_cb:
+            progress_cb(idx, total)
+
+    sampled = _sample_eusm_layer(gdf, "eunis2007", shared)
     results = []
-    total = len(gdf)
-
-    for i, (idx, row) in enumerate(gdf.iterrows()):
-        if progress_cb and (i % 50 == 0 or i == total - 1):
-            progress_cb(i + 1, total)
-
+    for _, row in gdf.iterrows():
         sid = row[id_col]
-        centroid = centroids.iloc[i]
-        clon, clat = centroid.x, centroid.y
-
-        # Tile aligned to _MAX_TILE_DEG grid
-        tile_lon0 = math.floor(clon / _MAX_TILE_DEG) * _MAX_TILE_DEG
-        tile_lat0 = math.floor(clat / _MAX_TILE_DEG) * _MAX_TILE_DEG
-        tile_lon1 = tile_lon0 + _MAX_TILE_DEG
-        tile_lat1 = tile_lat0 + _MAX_TILE_DEG
-
-        try:
-            arr = _get_tile(tile_lon0, tile_lat0, tile_lon1, tile_lat1)
-        except Exception as exc:
-            logger.warning("WMS tile unavailable for %s: %s", sid, exc)
+        v = sampled.get(sid)
+        if v:
+            results.append({
+                "Subzone_ID": sid,
+                "dominant_EUNIS": v["code"],
+                "dominant_EUNIS_name": v["name"],
+                "habitat_count": 1,
+                "dominant_pct": 100.0,
+                "coverage_pct": 100.0,
+                "geometry": row.geometry,
+            })
+        else:
             results.append(_no_data_row(sid, row.geometry))
-            continue
-
-        r, g, b, a = _sample_tile(arr, clon, clat, tile_lon0, tile_lat0, tile_lon1, tile_lat1)
-
-        if a < 128:
-            results.append(_no_data_row(sid, row.geometry))
-            continue
-
-        code, name = legend.get((r, g, b), (None, None))
-        if code is None:
-            results.append(_no_data_row(sid, row.geometry))
-            continue
-
-        results.append({
-            "Subzone_ID": sid,
-            "dominant_EUNIS": code,
-            "dominant_EUNIS_name": name,
-            "habitat_count": 1,
-            "dominant_pct": 100.0,
-            "coverage_pct": 100.0,
-            "geometry": row.geometry,
-        })
 
     result_gdf = gpd.GeoDataFrame(results, crs=grid_gdf.crs)
     n_with = result_gdf["dominant_EUNIS"].notna().sum()
-    logger.info("EuSEAMAP annotation: %d/%d hexagons assigned, %d WMS tiles used",
-                n_with, total, len(tile_cache))
+    logger.info("EUNIS annotation: %d/%d hexagons assigned", n_with, len(result_gdf))
     return result_gdf
 
 

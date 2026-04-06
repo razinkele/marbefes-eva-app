@@ -597,20 +597,20 @@ app_ui = ui.page_navbar(
                 ui.hr(),
                 ui.div(
                     ui.h5(
-                        "4. Annotate with EUNIS Habitats",
+                        "4. Annotate with Environmental Covariates",
                         style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;",
                     ),
                     ui.p(
-                        "Assign EUNIS Level 3 habitat codes to each hexagon. "
-                        "Required for Physical Accounts (ecosystem extent & condition). "
-                        "Optional but recommended for comprehensive EVA.",
+                        "Enrich each hexagon with habitat and environmental data for "
+                        "Physical Accounts and Species Distribution Modelling (SDM). "
+                        "EUNIS L3 is required for Physical Accounts.",
                         style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
                     ),
                     ui.input_radio_buttons(
                         "eunis_source",
-                        "Habitat data source:",
+                        "Data source:",
                         choices={
-                            "auto": "EMODnet EuSEAMAP 2025 (automatic, online)",
+                            "auto": "EMODnet online services (automatic)",
                             "upload": "Upload custom habitat map",
                         },
                         selected="auto",
@@ -619,27 +619,46 @@ app_ui = ui.page_navbar(
                         "input.eunis_source === 'auto'",
                         ui.div(
                             ui.HTML(
-                                "<b>📡 EMODnet EuSEAMAP 2025</b> — EUNIS 2007 L3 classification, "
-                                "pan-European seabed habitat layer from EMODnet Seabed Habitats. "
-                                "Hexagons are annotated by sampling the WMS at their centroids. "
+                                "<b>📡 Select layers to fetch:</b>"
+                            ),
+                            style="font-size: 0.82rem; font-weight: 600; margin-bottom: 0.4rem;",
+                        ),
+                        ui.input_checkbox_group(
+                            "sdm_layers",
+                            None,
+                            choices={
+                                "eunis2007": "🌿 EUNIS 2007 L3 habitat (EuSEAMAP 2025) — for PA",
+                                "substrate": "🪨 Seabed substrate type (rock/sand/mud/gravel)",
+                                "energy":    "🌊 Energy class (wave/current exposure)",
+                                "biozone":   "🔵 Biological zone (infralittoral/circalittoral/…)",
+                                "helcom":    "🇸🇪 HELCOM HUB class (Baltic Sea)",
+                                "depth":     "📏 Water depth — EMODnet Bathymetry WCS",
+                            },
+                            selected=["eunis2007", "substrate", "energy", "depth"],
+                        ),
+                        ui.div(
+                            ui.HTML(
+                                "All EuSEAMAP layers share one WMS on "
+                                "<em>emodnet-seabedhabitats.eu</em>. Depth uses the "
+                                "EMODnet Bathymetry WCS (~1 MB download). "
                                 "Requires internet access. Near-shore hexagons may lack data."
                             ),
                             style=(
-                                "font-size: 0.78rem; color: #555; background: #f0f7ff; "
+                                "font-size: 0.75rem; color: #555; background: #f0f7ff; "
                                 "border-left: 3px solid #006994; border-radius: 4px; "
-                                "padding: 0.5rem 0.6rem; margin-bottom: 0.6rem;"
+                                "padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;"
                             ),
                         ),
                         ui.tooltip(
                             ui.input_action_button(
                                 "fetch_eunis",
-                                "🌊 Fetch EUNIS from EuSEAMAP",
+                                "🌊 Fetch Selected Layers",
                                 class_="btn-info",
                                 style="width: 100%; margin-bottom: 0.4rem; color: white;",
                             ),
-                            "Downloads EuSEAMAP 2025 habitat data from EMODnet WMS and assigns "
-                            "dominant EUNIS Level 3 codes to each hexagon based on centroid sampling. "
-                            "A grid must be generated first (Step 3).",
+                            "Downloads the selected EMODnet layers and annotates each hexagon "
+                            "by sampling at the centroid. EUNIS L3 result is automatically "
+                            "loaded into Physical Accounts. A grid must be generated first.",
                             placement="right",
                         ),
                     ),
@@ -654,8 +673,7 @@ app_ui = ui.page_navbar(
                         ),
                         ui.p(
                             "GeoPackage (.gpkg), GeoJSON, or zipped Shapefile/FileGDB. "
-                            "Layer must contain an 'EUNIScomb' column with EUNIS codes. "
-                            "Any CRS is accepted (auto-reprojected).",
+                            "Must contain an 'EUNIScomb' column. Any CRS is auto-reprojected.",
                             style="font-size: 0.78rem; color: #6c757d; margin-top: 0.3rem;",
                         ),
                     ),
@@ -665,10 +683,20 @@ app_ui = ui.page_navbar(
                             "download_eunis_overlay",
                             "Download EUNIS Overlay (.gpkg)",
                             class_="btn-outline-secondary",
-                            style="width: 100%; margin-top: 0.4rem;",
+                            style="width: 100%; margin-top: 0.3rem;",
                         ),
-                        "Download the EUNIS habitat annotation as a GeoPackage file "
-                        "for use in GIS software or as input to Physical Accounts.",
+                        "Download EUNIS L3 annotation as GeoPackage for Physical Accounts.",
+                        placement="right",
+                    ),
+                    ui.tooltip(
+                        ui.download_button(
+                            "download_sdm_covariates",
+                            "Download SDM Covariates (.csv)",
+                            class_="btn-outline-secondary",
+                            style="width: 100%; margin-top: 0.3rem;",
+                        ),
+                        "Download all fetched environmental covariates as CSV for use in "
+                        "species distribution models (MaxEnt, BRT, Random Forest, etc.).",
                         placement="right",
                     ),
                 ),

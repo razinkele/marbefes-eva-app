@@ -67,6 +67,7 @@ def server(input, output, session):
     # Grid Setup reactive values
     boundary_polygon = reactive.Value(None)   # GeoDataFrame with boundary polygon
     generated_grid = reactive.Value(None)     # GeoDataFrame with generated hex grid
+    sdm_covariates = reactive.Value(None)     # GeoDataFrame with all SDM covariate layers
 
     # DwC-A state
     dwca_info = reactive.Value(None)   # DwC-A summary dict or None if CSV
@@ -2236,7 +2237,7 @@ def server(input, output, session):
             ui.notification_show(f"Error loading EUNIS overlay: {e}", type="error")
 
     # -----------------------------------------------------------------
-    # Grid Setup → Section 4: EUNIS annotation from WMS or custom file
+    # Grid Setup → Section 4: Environmental covariates (EUNIS + SDM)
     # -----------------------------------------------------------------
 
     @reactive.Effect
@@ -2245,33 +2246,68 @@ def server(input, output, session):
         grid = generated_grid.get()
         if grid is None:
             ui.notification_show(
-                "Generate a grid first (Step 3) before fetching EUNIS data.",
+                "Generate a grid first (Step 3) before fetching data.",
                 type="warning", duration=5,
             )
             return
+        selected = list(input.sdm_layers()) if input.sdm_layers() else ["eunis2007"]
+        if not selected:
+            ui.notification_show("Select at least one layer to fetch.", type="warning", duration=4)
+            return
+        layer_labels = [
+            eva_eunis_wms.EUSM_LAYERS.get(k, {}).get("label", k) if k != "depth"
+            else "Water depth"
+            for k in selected
+        ]
         ui.notification_show(
-            f"Fetching EuSEAMAP 2025 habitat data for {len(grid)} hexagons… "
-            "This may take a minute.",
-            type="message", duration=8,
+            f"Fetching {len(selected)} layer(s) for {len(grid)} hexagons: "
+            f"{', '.join(layer_labels)}. This may take a minute…",
+            type="message", duration=10,
         )
         try:
-            overlay = eva_eunis_wms.fetch_eunis_for_grid(grid)
+            covariates = eva_eunis_wms.fetch_sdm_covariates(grid, layers=selected)
         except Exception as exc:
-            logger.error("EuSEAMAP WMS error: %s", exc)
+            logger.error("SDM covariate fetch error: %s", exc)
             ui.notification_show(
-                f"Could not fetch EuSEAMAP data: {exc}. "
+                f"Could not fetch covariate data: {exc}. "
                 "Check your internet connection or try uploading a custom habitat map.",
                 type="error", duration=10,
             )
             return
-        eunis_overlay.set(overlay)
-        _apply_eunis_overlay(overlay)
-        n_with = int(overlay["dominant_EUNIS"].notna().sum())
-        n_types = int(overlay["dominant_EUNIS"].nunique())
+
+        sdm_covariates.set(covariates)
+
+        # If EUNIS was fetched, also update eunis_overlay for Physical Accounts
+        if "eunis2007" in selected and "dominant_EUNIS" in covariates.columns:
+            eunis_cols = ["Subzone_ID", "dominant_EUNIS", "dominant_EUNIS_name", "geometry"]
+            overlay = gpd.GeoDataFrame(
+                covariates[[c for c in eunis_cols if c in covariates.columns]],
+                crs=covariates.crs,
+            )
+            # Add habitat_count / pct columns expected by eunis_data functions
+            for col in ("habitat_count", "dominant_pct", "coverage_pct"):
+                if col not in overlay.columns:
+                    overlay[col] = overlay["dominant_EUNIS"].notna().astype(float) * 100.0
+            eunis_overlay.set(overlay)
+            _apply_eunis_overlay(overlay)
+            n_eunis = int(overlay["dominant_EUNIS"].notna().sum())
+            n_types = int(overlay["dominant_EUNIS"].nunique())
+            logger.info("EUNIS overlay set: %d types, %d/%d hexagons", n_types, n_eunis, len(overlay))
+
+        # Summary notification
+        parts = []
+        for key in selected:
+            if key == "depth" and "depth_m" in covariates.columns:
+                n = int(covariates["depth_m"].notna().sum())
+                parts.append(f"depth: {n} hexagons")
+            elif key in eva_eunis_wms.EUSM_LAYERS:
+                col = eva_eunis_wms.EUSM_LAYERS[key]["col"]
+                if col in covariates.columns:
+                    n = int(covariates[col].notna().sum())
+                    parts.append(f"{eva_eunis_wms.EUSM_LAYERS[key]['label']}: {n}")
         ui.notification_show(
-            f"✅ EuSEAMAP 2025: {n_types} EUNIS habitat types assigned to "
-            f"{n_with}/{len(overlay)} hexagons.",
-            type="message", duration=7,
+            "✅ " + " · ".join(parts) if parts else "✅ Fetch complete.",
+            type="message", duration=8,
         )
 
     @reactive.Effect
@@ -2372,28 +2408,37 @@ def server(input, output, session):
     @output
     @render.ui
     def eunis_grid_status():
-        overlay = eunis_overlay.get()
         grid = generated_grid.get()
         if grid is None:
             return ui.p(
                 "Generate a grid first.",
                 style="font-size: 0.8rem; color: #6c757d; margin-top: 0.4rem;",
             )
-        if overlay is None:
+        cov = sdm_covariates.get()
+        overlay = eunis_overlay.get()
+        if cov is None and overlay is None:
             return ui.p(
-                "No EUNIS annotation yet. Fetch from EuSEAMAP or upload a habitat map.",
+                "No data fetched yet. Select layers and click 'Fetch Selected Layers'.",
                 style="font-size: 0.8rem; color: #6c757d; margin-top: 0.4rem;",
             )
-        n_with = int(overlay["dominant_EUNIS"].notna().sum())
-        n_types = int(overlay["dominant_EUNIS"].nunique())
-        n_total = len(overlay)
-        pct = round(n_with / n_total * 100) if n_total else 0
-        return ui.div(
-            ui.p(
-                f"✅ {n_types} EUNIS types · {n_with}/{n_total} hexagons annotated ({pct}%)",
-                style="color: #28a745; font-weight: 600; margin-top: 0.4rem; font-size: 0.85rem;",
-            ),
-        )
+        rows = []
+        # Show SDM covariate summary
+        if cov is not None:
+            for key, cfg in eva_eunis_wms.EUSM_LAYERS.items():
+                col = cfg["col"]
+                if col in cov.columns:
+                    n = int(cov[col].notna().sum())
+                    n_types = int(cov[col].nunique())
+                    rows.append(f"✅ {cfg['label']}: {n_types} classes, {n}/{len(cov)} hexagons")
+            if "depth_m" in cov.columns:
+                n = int(cov["depth_m"].notna().sum())
+                rows.append(f"✅ Water depth: {n}/{len(cov)} hexagons")
+        elif overlay is not None:
+            n_with = int(overlay["dominant_EUNIS"].notna().sum())
+            n_types = int(overlay["dominant_EUNIS"].nunique())
+            rows.append(f"✅ EUNIS L3: {n_types} types, {n_with}/{len(overlay)} hexagons")
+        items = [ui.p(r, style="margin: 0.1rem 0; font-size: 0.82rem; color: #28a745; font-weight: 600;") for r in rows]
+        return ui.div(*items, style="margin-top: 0.4rem;")
 
     @render.download(filename="eunis_overlay.gpkg")
     def download_eunis_overlay():
@@ -2403,6 +2448,20 @@ def server(input, output, session):
         with io.BytesIO() as buf:
             overlay.to_file(buf, driver="GPKG")
             yield buf.getvalue()
+
+    @render.download(filename="sdm_covariates.csv")
+    def download_sdm_covariates():
+        cov = sdm_covariates.get()
+        if cov is None:
+            # Fallback: export EUNIS overlay as CSV
+            overlay = eunis_overlay.get()
+            if overlay is None:
+                return
+            cov = overlay
+        df = cov.drop(columns="geometry", errors="ignore")
+        buf = io.StringIO()
+        df.to_csv(buf, index=False)
+        yield buf.getvalue().encode()
 
     @output
     @render.ui

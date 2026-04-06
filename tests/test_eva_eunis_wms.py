@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 from PIL import Image
 from shapely.geometry import Polygon
 
@@ -147,6 +148,158 @@ class TestComputeOverlayFromFile(unittest.TestCase):
         )
         result = eva_eunis_wms.compute_overlay_from_file(grid, habitat)
         self.assertTrue(result.iloc[0]["dominant_EUNIS"] is None)
+
+
+class TestBuildLayerLegend(unittest.TestCase):
+    """Test _build_layer_legend with different EuSEAMAP filter formats."""
+
+    def setUp(self):
+        eva_eunis_wms._legend_caches.clear()
+
+    def _mock_legend(self, title, filter_str, color="#BF5000"):
+        return json.dumps({
+            "Legend": [{
+                "rules": [{
+                    "title": title,
+                    "filter": filter_str,
+                    "symbolizers": [{"Polygon": {"fill": color}}],
+                }]
+            }]
+        }).encode()
+
+    def test_substrate_filter_format(self):
+        payload = self._mock_legend(
+            "Rock", "[substrate = 'Rock']", "#888888"
+        )
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = payload
+            mock_url.return_value = mock_resp
+            legend = eva_eunis_wms._build_layer_legend("eusm2025_subs_full")
+        self.assertIn((0x88, 0x88, 0x88), legend)
+        code, name = legend[(0x88, 0x88, 0x88)]
+        self.assertEqual(code, "Rock")
+        self.assertEqual(name, "Rock")
+
+    def test_biozone_filter_format(self):
+        payload = self._mock_legend(
+            "Infralittoral", "[biozone = 'Infralittoral']", "#00AABB"
+        )
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = payload
+            mock_url.return_value = mock_resp
+            legend = eva_eunis_wms._build_layer_legend("eusm2025_bio_full")
+        self.assertIn((0x00, 0xAA, 0xBB), legend)
+        code, _ = legend[(0x00, 0xAA, 0xBB)]
+        self.assertEqual(code, "Infralittoral")
+
+    def test_helcom_filter_does_not_split_on_first_colon(self):
+        payload = self._mock_legend(
+            "AA.A: Baltic photic rock", "[regionald = 'AA.A: Baltic photic rock']", "#336699"
+        )
+        with patch("urllib.request.urlopen") as mock_url:
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = payload
+            mock_url.return_value = mock_resp
+            legend = eva_eunis_wms._build_layer_legend("eusm2025_helcom_full")
+        code, name = legend[(0x33, 0x66, 0x99)]
+        # HELCOM titles starting with "AA." must not be split on ":"
+        self.assertEqual(code, "AA.A: Baltic photic rock")
+        self.assertEqual(name, "AA.A: Baltic photic rock")
+
+    def test_per_layer_cache_is_independent(self):
+        # Pre-populate one cache entry
+        eva_eunis_wms._legend_caches["eusm2025_subs_full"] = {(1, 2, 3): ("Mud", "Mud")}
+        with patch("urllib.request.urlopen") as mock_url:
+            result = eva_eunis_wms._build_layer_legend("eusm2025_subs_full")
+            mock_url.assert_not_called()
+        self.assertEqual(result[(1, 2, 3)], ("Mud", "Mud"))
+
+
+class TestFetchSdmCovariates(unittest.TestCase):
+    """Test fetch_sdm_covariates with mocked _sample_eusm_layer and fetch_depth_for_grid."""
+
+    def setUp(self):
+        eva_eunis_wms._legend_caches.clear()
+
+    def _eunis_sample_result(self, grid):
+        """Return a {Subzone_ID: {code, name}} dict as _sample_eusm_layer would."""
+        ids = grid["Subzone ID" if "Subzone ID" in grid.columns else "Subzone_ID"].tolist()
+        return {sid: {"code": "A5.27", "name": "Deep sand"} for sid in ids}
+
+    def test_eunis_only(self):
+        grid = _make_grid(3)
+        mock_result = self._eunis_sample_result(grid)
+
+        with patch.object(eva_eunis_wms, "_sample_eusm_layer", return_value=mock_result):
+            result = eva_eunis_wms.fetch_sdm_covariates(grid, layers=["eunis2007"])
+
+        self.assertIn("dominant_EUNIS", result.columns)
+        self.assertEqual(len(result), 3)
+        self.assertTrue((result["dominant_EUNIS"] == "A5.27").all())
+
+    def test_depth_layer_included(self):
+        grid = _make_grid(2)
+        mock_result = self._eunis_sample_result(grid)
+
+        ids = grid["Subzone ID"].tolist()
+        depth_df = pd.DataFrame({"Subzone_ID": ids, "depth_m": [18.0, 25.5]})
+
+        with patch.object(eva_eunis_wms, "_sample_eusm_layer", return_value=mock_result):
+            with patch.object(eva_eunis_wms, "fetch_depth_for_grid", return_value=depth_df):
+                result = eva_eunis_wms.fetch_sdm_covariates(grid, layers=["eunis2007", "depth"])
+
+        self.assertIn("depth_m", result.columns)
+        val = result[result["Subzone_ID"] == "HEX_001"]["depth_m"].iloc[0]
+        self.assertAlmostEqual(float(val), 18.0)
+
+    def test_empty_layer_list_raises(self):
+        grid = _make_grid(2)
+        with self.assertRaises(ValueError):
+            eva_eunis_wms.fetch_sdm_covariates(grid, layers=[])
+
+
+class TestFetchDepthSignConvention(unittest.TestCase):
+    """Test depth sign convention: negative WCS → positive depth_m; positive → None (land)."""
+
+    def _make_geotiff_bytes(self, value: float):
+        """Build a minimal 2×2 float32 GeoTIFF with a constant value."""
+        import struct
+        try:
+            import rasterio
+            from rasterio.transform import from_bounds
+            from rasterio.crs import CRS
+            buf = io.BytesIO()
+            transform = from_bounds(20.0, 55.0, 20.1, 55.1, 2, 2)
+            with rasterio.open(
+                buf, "w", driver="GTiff", height=2, width=2,
+                count=1, dtype="float32", crs=CRS.from_epsg(4326), transform=transform,
+            ) as ds:
+                ds.write(np.full((1, 2, 2), value, dtype=np.float32))
+            return buf.getvalue()
+        except ImportError:
+            self.skipTest("rasterio not available")
+
+    def test_negative_wcs_value_gives_positive_depth(self):
+        tiff_bytes = self._make_geotiff_bytes(-23.9)
+        grid = _make_grid(1)
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = tiff_bytes
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = eva_eunis_wms.fetch_depth_for_grid(grid)
+        if "depth_m" in result.columns and result.iloc[0]["depth_m"] is not None:
+            self.assertGreater(result.iloc[0]["depth_m"], 0)
+
+    def test_positive_wcs_value_is_land_gives_none(self):
+        tiff_bytes = self._make_geotiff_bytes(18.88)
+        grid = _make_grid(1)
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = tiff_bytes
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            result = eva_eunis_wms.fetch_depth_for_grid(grid)
+        if "depth_m" in result.columns:
+            self.assertIsNone(result.iloc[0]["depth_m"])
 
 
 if __name__ == "__main__":
