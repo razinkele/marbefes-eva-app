@@ -145,14 +145,15 @@ def prepare_features(
     Build X (feature matrix) and y (response vector) ready for model fitting.
 
     Numeric columns are kept as-is (NaN rows dropped).
-    EUNIS / categorical columns are one-hot encoded (drop_first=True to avoid
-    perfect multicollinearity).
+    EUNIS / categorical columns are one-hot encoded (drop_first=False so that
+    the full dummy set is preserved for consistent alignment with predict_grid).
 
     Returns
     -------
     X          : ndarray, shape (n_samples, n_features)
     y          : ndarray, shape (n_samples,)
-    feat_names : list of feature column names (for diagnostics)
+    feat_names : list of feature column names — pass this to predict_grid so
+                 the grid feature matrix uses the same columns in the same order.
     """
     work = df[[response_col] + predictor_cols].copy()
 
@@ -161,9 +162,9 @@ def prepare_features(
                 or work[c].dtype == object]
     num_cols = [c for c in predictor_cols if c not in cat_cols]
 
-    # One-hot encode categorical columns
+    # One-hot encode categorical columns (drop_first=False → stable column set)
     if cat_cols:
-        dummies = pd.get_dummies(work[cat_cols], drop_first=True, dtype=float)
+        dummies = pd.get_dummies(work[cat_cols], drop_first=False, dtype=float)
         work = pd.concat([work[num_cols + [response_col]], dummies], axis=1)
         feat_cols = num_cols + list(dummies.columns)
     else:
@@ -612,6 +613,7 @@ def predict_grid(
     response_type: ResponseType = "continuous",
     lat_col: str = "lat",
     lon_col: str = "lon",
+    feat_names: list[str] | None = None,
 ) -> tuple[pd.Series, pd.Series | None]:
     """
     Predict species distribution for every grid cell.
@@ -619,20 +621,12 @@ def predict_grid(
     Parameters
     ----------
     grid_gdf        : hex grid GeoDataFrame with covariate columns
-    predictor_cols  : list of covariate column names (used by covariate-based models)
-    gam_model       : fitted pygam model
-    idw_model       : fitted IDWModel
-    kriging_model   : fitted pykrige OrdinaryKriging
-    rf_model        : fitted sklearn RandomForest estimator
-    xgb_model       : fitted xgboost XGBClassifier/XGBRegressor
-    lgbm_model      : fitted lightgbm LGBMClassifier/LGBMRegressor
-    gp_model        : fitted sklearn GaussianProcessRegressor (must have _eva_scaler)
-    rk_model        : fitted pykrige RegressionKriging
-    method          : which model to use for final predictions
-    ensemble_weights: dict mapping method names to weights, e.g.
-                      {"gam": 0.3, "rf": 0.4, "kriging": 0.3}
-                      Defaults to equal weights for models that are provided.
-    response_type   : 'continuous' | 'binary' | 'count'
+    predictor_cols  : list of raw covariate column names (before encoding)
+    feat_names      : **fitted** feature names returned by prepare_features().
+                      When provided, the grid feature matrix is aligned to these
+                      columns — this ensures categorical dummy columns match the
+                      training set exactly (no missing / extra categories).
+    ...other params same as before...
 
     Returns
     -------
@@ -658,8 +652,15 @@ def predict_grid(
                 or work[c].dtype == object]
     num_cols = [c for c in predictor_cols if c not in cat_cols]
     if cat_cols:
-        dummies = pd.get_dummies(work[cat_cols], drop_first=True, dtype=float)
+        dummies = pd.get_dummies(work[cat_cols], drop_first=False, dtype=float)
         work = pd.concat([work[num_cols], dummies], axis=1)
+
+    # Align to training feature names (handles unseen / missing categories)
+    if feat_names is not None:
+        for missing_col in set(feat_names) - set(work.columns):
+            work[missing_col] = 0.0
+        work = work[feat_names]  # reorder + drop extra columns
+
     valid_mask = work.notna().all(axis=1) if not work.empty else pd.Series(True, index=grid_gdf.index)
     X_grid = work[valid_mask].values.astype(float) if not work.empty else np.empty((valid_mask.sum(), 0))
 
@@ -1045,3 +1046,189 @@ def available_predictor_cols(grid_gdf: gpd.GeoDataFrame) -> list[str]:
         elif c.lower() in _EUNIS_COLS or grid_gdf[c].dtype == object:
             cols.append(c)
     return cols
+
+
+# ---------------------------------------------------------------------------
+# Data analysis & method recommendation
+# ---------------------------------------------------------------------------
+
+_METHOD_LABELS = {
+    "gam":                "📈 GAM (Generalized Additive Model)",
+    "idw":                "📍 IDW (Inverse Distance Weighting)",
+    "kriging":            "🌐 Ordinary Kriging",
+    "rf":                 "🌲 Random Forest",
+    "xgboost":            "⚡ XGBoost",
+    "lightgbm":           "💡 LightGBM",
+    "gp":                 "🔮 Gaussian Process",
+    "regression_kriging": "⭐ Regression Kriging (RF + OK)",
+    "ensemble":           "🔀 Ensemble",
+}
+
+def analyse_sampling_data(
+    data: pd.DataFrame,
+    response_col: str,
+    lat_col: str = "lat",
+    lon_col: str = "lon",
+    covariates_gdf: "gpd.GeoDataFrame | None" = None,
+) -> dict:
+    """
+    Analyse sampling data and return statistics + method recommendation.
+
+    Parameters
+    ----------
+    data         : sampling DataFrame with at least lat, lon, response_col
+    response_col : column name for the species response variable
+    lat_col      : latitude column name
+    lon_col      : longitude column name
+    covariates_gdf : optional covariate grid (used to detect categorical predictors)
+
+    Returns
+    -------
+    dict with keys:
+      n_sites, n_valid, response_min, response_max, response_mean,
+      response_std, n_zeros, prevalence, data_type ('binary'|'count'|'continuous'),
+      zero_inflation, spatial_extent_km2, has_covariates, categorical_cols,
+      suggested_method, suggestion_reasons (list[str]),
+      response_hist (list of (bin_edge, count) for histogram),
+      warnings (list[str])
+    """
+    result: dict = {}
+    warnings_list: list[str] = []
+
+    # ── Basic response stats ─────────────────────────────────────────────────
+    if response_col not in data.columns:
+        return {"error": f"Column '{response_col}' not found in data."}
+
+    y_raw = pd.to_numeric(data[response_col], errors="coerce")
+    valid = y_raw.dropna()
+    n_total = len(data)
+    n_valid = int(valid.notna().sum())
+
+    result["n_sites"]       = n_total
+    result["n_valid"]       = n_valid
+    result["response_min"]  = float(valid.min()) if n_valid else np.nan
+    result["response_max"]  = float(valid.max()) if n_valid else np.nan
+    result["response_mean"] = float(valid.mean()) if n_valid else np.nan
+    result["response_std"]  = float(valid.std())  if n_valid > 1 else np.nan
+    result["n_zeros"]       = int((valid == 0).sum())
+    result["prevalence"]    = float((valid > 0).mean()) if n_valid else np.nan
+    result["zero_inflation"] = float(result["n_zeros"] / n_valid) if n_valid else 0.0
+
+    # ── Detect data type ─────────────────────────────────────────────────────
+    unique_vals = set(valid.unique())
+    if unique_vals.issubset({0.0, 1.0}):
+        data_type = "binary"
+    elif all(float(v).is_integer() for v in unique_vals):
+        data_type = "count"
+    else:
+        data_type = "continuous"
+    result["data_type"] = data_type
+
+    # ── Spatial extent ───────────────────────────────────────────────────────
+    if lat_col in data.columns and lon_col in data.columns:
+        lats = pd.to_numeric(data[lat_col], errors="coerce").dropna()
+        lons = pd.to_numeric(data[lon_col], errors="coerce").dropna()
+        if len(lats) > 1:
+            lat_range_km = (lats.max() - lats.min()) * 111.0
+            lon_range_km = (lons.max() - lons.min()) * 111.0 * float(np.cos(np.radians(lats.mean())))
+            result["spatial_extent_km2"] = float(lat_range_km * lon_range_km)
+        else:
+            result["spatial_extent_km2"] = 0.0
+    else:
+        result["spatial_extent_km2"] = None
+
+    # ── Categorical covariates ────────────────────────────────────────────────
+    cat_cols: list[str] = []
+    if covariates_gdf is not None:
+        for c in covariates_gdf.columns:
+            if c.lower() in _EUNIS_COLS or (
+                covariates_gdf[c].dtype == object
+                and c not in {"geometry", "cell_id", "h3_index"}
+            ):
+                cat_cols.append(c)
+    result["categorical_cols"] = cat_cols
+    result["has_covariates"] = covariates_gdf is not None
+
+    # ── Response histogram (10 bins) ─────────────────────────────────────────
+    if n_valid >= 2:
+        counts, edges = np.histogram(valid.values, bins=min(10, n_valid))
+        result["response_hist"] = {
+            "edges": edges.tolist(),
+            "counts": counts.tolist(),
+        }
+    else:
+        result["response_hist"] = None
+
+    # ── Method recommendation ─────────────────────────────────────────────────
+    reasons: list[str] = []
+    method = "ensemble"
+
+    has_cov = covariates_gdf is not None
+
+    if n_valid < 10:
+        method = "idw"
+        reasons.append(f"⚠️ Very few sites ({n_valid}) — IDW is the safest choice; "
+                       "collect more samples for ML methods.")
+        warnings_list.append(f"Only {n_valid} valid observations. Results will be highly uncertain.")
+
+    elif n_valid < 30:
+        method = "gam" if has_cov else "idw"
+        reasons.append(f"Small sample ({n_valid} sites) — GAM with smooth splines avoids overfitting.")
+        if has_cov:
+            reasons.append("Covariates available → GAM can model habitat-response relationships.")
+        else:
+            reasons.append("No covariates loaded → IDW uses spatial proximity only.")
+
+    elif n_valid < 100:
+        if has_cov:
+            method = "regression_kriging" if data_type != "binary" else "rf"
+            if data_type == "binary":
+                reasons.append(f"Presence/absence data ({n_valid} sites) → "
+                               "Random Forest classifier handles class imbalance well.")
+            else:
+                reasons.append(f"Moderate sample ({n_valid} sites) with covariates → "
+                               "Regression Kriging combines spatial autocorrelation with habitat variables.")
+        else:
+            method = "kriging"
+            reasons.append(f"Moderate sample ({n_valid} sites), no covariates → "
+                           "Ordinary Kriging exploits spatial autocorrelation.")
+
+    else:
+        if data_type == "binary":
+            method = "rf" if not has_cov else "xgboost"
+            reasons.append(f"Large presence/absence dataset ({n_valid} sites) → "
+                           "XGBoost/RF classifiers are state-of-the-art for binary SDM.")
+        elif data_type == "count" and result["zero_inflation"] > 0.5:
+            method = "rf" if has_cov else "kriging"
+            reasons.append(f"Zero-inflated counts ({result['zero_inflation']:.0%} zeros) → "
+                           "Random Forest handles this distribution without transformation.")
+            warnings_list.append("High zero-inflation detected. Consider two-stage modelling "
+                                  "(hurdle model: presence/absence first, then abundance).")
+        else:
+            method = "ensemble" if has_cov else "regression_kriging"
+            reasons.append(f"Large dataset ({n_valid} sites) with covariates → "
+                           "Ensemble combines GAM, IDW, Kriging, and RF for robust predictions.")
+
+    # Extra covariate-based reasons
+    if has_cov and cat_cols:
+        reasons.append(f"Categorical predictors detected ({', '.join(cat_cols[:3])}) → "
+                       "tree-based methods (RF, XGBoost) handle these natively; "
+                       "GAM/Kriging use one-hot encoding automatically.")
+
+    if data_type == "binary" and result["prevalence"] < 0.1:
+        warnings_list.append(
+            f"Very low prevalence ({result['prevalence']:.1%}). "
+            "Consider using presence-background or weighted sampling."
+        )
+    if data_type == "binary" and result["prevalence"] > 0.9:
+        warnings_list.append(
+            f"Very high prevalence ({result['prevalence']:.1%}). "
+            "Check whether absences are recorded or if this is presence-only data."
+        )
+
+    result["suggested_method"] = method
+    result["suggestion_reasons"] = reasons
+    result["warnings"] = warnings_list
+
+    return result
+

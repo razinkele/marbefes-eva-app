@@ -2959,11 +2959,140 @@ def server(input, output, session):
             ),
         )
 
-
+    # ── SDM: data analysis & method recommendation ────────────────────────────
 
     @reactive.effect
-    @reactive.event(input.sdm_fit_btn)
-    def handle_fit_sdm():
+    @reactive.event(input.sdm_response_col, input.sdm_data_source,
+                    sdm_dwca_df, uploaded_data)
+    def _auto_set_response_type():
+        """Detect binary vs continuous from data and update the radio button."""
+        data, lat_col, lon_col = _get_sdm_sample_df()
+        response_col = input.sdm_response_col() if hasattr(input, "sdm_response_col") else None
+        if data is None or not response_col or response_col not in data.columns:
+            return
+        y = pd.to_numeric(data[response_col], errors="coerce").dropna()
+        if len(y) == 0:
+            return
+        unique = set(y.unique())
+        if unique.issubset({0.0, 1.0}):
+            ui.update_radio_buttons("sdm_response_type", selected="binary")
+        elif all(float(v).is_integer() for v in unique):
+            ui.update_radio_buttons("sdm_response_type", selected="count")
+        else:
+            ui.update_radio_buttons("sdm_response_type", selected="continuous")
+
+    @output
+    @render.ui
+    def sdm_data_analysis():
+        data, lat_col, lon_col = _get_sdm_sample_df()
+        response_col = input.sdm_response_col() if hasattr(input, "sdm_response_col") else None
+        cov = sdm_covariates.get()
+
+        if data is None:
+            return ui.div(
+                ui.p("📂 Load sampling data (CSV or DwC-A) to see analysis and recommendations.",
+                     style="color:#999;padding:1rem;"),
+            )
+        if not response_col or response_col not in data.columns:
+            return ui.p("Select a response variable to analyse.", style="color:#999;padding:1rem;")
+
+        try:
+            info = eva_sdm.analyse_sampling_data(
+                data, response_col, lat_col=lat_col, lon_col=lon_col,
+                covariates_gdf=cov,
+            )
+        except Exception as exc:
+            return ui.p(f"Analysis error: {exc}", style="color:red;padding:1rem;")
+
+        if "error" in info:
+            return ui.p(info["error"], style="color:red;padding:1rem;")
+
+        # ── Build response histogram sparkline (inline SVG) ───────────────
+        hist_svg = ""
+        if info.get("response_hist"):
+            counts = info["response_hist"]["counts"]
+            if max(counts) > 0:
+                bar_w = 18; gap = 2; h = 50
+                c_max = max(counts)
+                bars = ""
+                for i, c in enumerate(counts):
+                    bar_h = int(c / c_max * h) if c_max else 0
+                    x = i * (bar_w + gap)
+                    bars += (f'<rect x="{x}" y="{h - bar_h}" width="{bar_w}" '
+                             f'height="{bar_h}" fill="#2980b9" opacity="0.7"/>')
+                total_w = len(counts) * (bar_w + gap)
+                hist_svg = (f'<svg width="{total_w}" height="{h}" '
+                            f'style="display:block;margin:4px 0;">{bars}</svg>')
+
+        # ── Data type badge ───────────────────────────────────────────────
+        type_colors = {
+            "binary":     ("#155724", "#d4edda"),
+            "count":      ("#856404", "#fff3cd"),
+            "continuous": ("#0c5460", "#d1ecf1"),
+        }
+        dt = info["data_type"]
+        tc, bc = type_colors.get(dt, ("#333", "#eee"))
+        type_badge = (f'<span style="background:{bc};color:{tc};padding:2px 8px;'
+                      f'border-radius:10px;font-size:0.78rem;font-weight:600;">'
+                      f'{dt.upper()}</span>')
+
+        # ── Method recommendation card ────────────────────────────────────
+        method = info["suggested_method"]
+        method_label = eva_sdm._METHOD_LABELS.get(method, method)
+        reason_items = "".join(f"<li>{r}</li>" for r in info["suggestion_reasons"])
+        warn_items   = "".join(
+            f'<li style="color:#856404;">⚠️ {w}</li>'
+            for w in info["warnings"]
+        )
+
+        # Categorical covariate note
+        cat_note = ""
+        if info["categorical_cols"]:
+            cat_cols_str = ", ".join(f"<code>{c}</code>" for c in info["categorical_cols"])
+            cat_note = (
+                f'<div style="background:#f8f9fa;border-left:3px solid #6c757d;'
+                f'padding:8px 12px;margin-top:8px;border-radius:0 4px 4px 0;font-size:0.82rem;">'
+                f'<strong>🏷️ Categorical predictors:</strong> {cat_cols_str}<br>'
+                f'<span style="color:#555;">Tree methods (RF, XGBoost, LightGBM) handle these natively. '
+                f'GAM and Kriging use automatic one-hot encoding — categories unseen during training '
+                f'receive a zero vector, which is equivalent to the reference category.</span>'
+                f'</div>'
+            )
+
+        html = f"""
+<div style="font-size:0.85rem;padding:0.5rem;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <strong>Response:</strong> <code>{response_col}</code>
+    {type_badge}
+  </div>
+  <table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:6px;">
+    <tr><td style="color:#555;padding:1px 4px;">Sites:</td>
+        <td><strong>{info['n_valid']}</strong> / {info['n_sites']} valid</td>
+        <td style="color:#555;padding:1px 4px;">Prevalence:</td>
+        <td><strong>{info['prevalence']:.1%}</strong></td></tr>
+    <tr><td style="color:#555;padding:1px 4px;">Min / Max:</td>
+        <td><strong>{info['response_min']:.3g} – {info['response_max']:.3g}</strong></td>
+        <td style="color:#555;padding:1px 4px;">Zeros:</td>
+        <td><strong>{info['n_zeros']}</strong> ({info['zero_inflation']:.0%})</td></tr>
+    <tr><td style="color:#555;padding:1px 4px;">Mean ± SD:</td>
+        <td colspan="3"><strong>{info['response_mean']:.3g} ± {info['response_std']:.3g}</strong></td></tr>
+  </table>
+  {hist_svg}
+  <hr style="margin:8px 0;">
+  <div style="background:#e8f4f8;border:1px solid #bee5eb;border-radius:6px;padding:10px;margin-bottom:8px;">
+    <div style="font-weight:700;color:#0c5460;margin-bottom:4px;">
+      💡 Recommended method: {method_label}
+    </div>
+    <ul style="margin:4px 0 0 0;padding-left:1.2rem;color:#555;">
+      {reason_items}
+      {warn_items}
+    </ul>
+  </div>
+  {cat_note}
+</div>"""
+        return ui.HTML(html)
+
+
         grid = generated_grid.get()
         cov  = sdm_covariates.get()
 
@@ -3110,6 +3239,7 @@ def server(input, output, session):
                 ensemble_weights=ens_weights,
                 response_type=response_type,
                 lat_col=lat_col, lon_col=lon_col,
+                feat_names=feat_names,
             )
 
             # 5. Diagnostics — in-sample predictions at sites

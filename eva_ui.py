@@ -2029,6 +2029,12 @@ app_ui = ui.page_fluid(
             # Main content — map + diagnostics
             ui.div(
                 ui.navset_tab(
+                    ui.nav_panel("📋 Data Analysis",
+                        ui.div(
+                            ui.output_ui("sdm_data_analysis"),
+                            style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                        ),
+                    ),
                     ui.nav_panel("🗺️ Predicted Distribution",
                         ui.output_ui("sdm_map_output"),
                     ),
