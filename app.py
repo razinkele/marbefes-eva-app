@@ -32,6 +32,7 @@ import dwca_reader
 from eva_ui import app_ui, get_aq_guide_html
 
 from version import get_version
+from branca.element import MacroElement, Template
 
 from eva_config import (
     MAX_FEATURES, PREVIEW_ROWS_LIMIT, RESULTS_DISPLAY_LIMIT, MAX_FILE_SIZE_MB,
@@ -395,7 +396,6 @@ def server(input, output, session):
     @output
     @render.ui
     def draw_map_output():
-        from branca.element import MacroElement, Template
         m = folium.Map(location=[55.7, 21.1], zoom_start=10, tiles="OpenStreetMap")
         # Create the draw feature group and draw control
         draw_fg = folium.FeatureGroup(name="drawn_items")
@@ -547,8 +547,7 @@ def server(input, output, session):
         bounds = gdf_for_bounds.total_bounds
         center_lat = (bounds[1] + bounds[3]) / 2
         center_lng = (bounds[0] + bounds[2]) / 2
-        from eva_map import auto_zoom_level
-        zoom = auto_zoom_level(bounds)
+        zoom = eva_map.auto_zoom_level(bounds)
         m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles="OpenStreetMap")
         # Show boundary
         if boundary is not None:

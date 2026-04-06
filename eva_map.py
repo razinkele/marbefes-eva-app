@@ -265,6 +265,7 @@ def create_habitat_map(gdf, assignments, basemap_name, opacity):
             "fillOpacity": opacity,
         }
 
+    habitat_layer = folium.FeatureGroup(name="Habitat Types", show=True)
     folium.GeoJson(
         map_gdf.to_json(),
         style_function=habitat_style,
@@ -272,7 +273,8 @@ def create_habitat_map(gdf, assignments, basemap_name, opacity):
             fields=["Subzone ID", "habitat_code", "habitat_name"],
             aliases=["Subzone:", "EUNIS Code:", "Habitat:"],
         )
-    ).add_to(m)
+    ).add_to(habitat_layer)
+    habitat_layer.add_to(m)
 
     items = [(color_map[code], f"{code} - {pa_config.EUNIS_LOOKUP.get(code, code)}")
              for code in unique_habitats]
