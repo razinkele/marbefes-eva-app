@@ -1030,100 +1030,213 @@ app_ui = ui.page_fluid(
                             ),
                         ),
                     ),
-                    id="grid_setup_accordion",
-                    open=["1. Define Study Area", "2. Grid Parameters"],
-                    multiple=True,
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("3. Generate", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
-                    ui.tooltip(
-                        ui.input_action_button(
-                            "generate_grid",
-                            "Generate Grid",
-                            class_="btn-primary",
-                            style="width: 100%; margin-bottom: 0.5rem;",
-                        ),
-                        "Creates a hexagonal H3 grid covering your study area. "
-                        "Land cells are automatically clipped using Natural Earth 10m coastlines.",
-                        placement="right",
-                    ),
-                    ui.tooltip(
-                        ui.download_button(
-                            "download_grid",
-                            "Download GeoJSON",
-                            class_="btn-outline-secondary",
-                            style="width: 100%; margin-bottom: 0.5rem;",
-                        ),
-                        "Download the generated grid as a GeoJSON file for use in GIS software (QGIS, ArcGIS, etc.).",
-                        placement="right",
-                    ),
-                    ui.tooltip(
-                        ui.input_action_button(
-                            "use_grid",
-                            "Use This Grid →",
-                            class_="btn-success",
-                            style="width: 100%;",
-                        ),
-                        "Load this grid into the EVA pipeline as your spatial assessment units (subzones). "
-                        "Proceed to the Data Input tab to upload EC data matched to the Subzone IDs.",
-                        placement="right",
-                    ),
-                    ui.p(
-                        "💡 After clicking 'Use This Grid', go to the Data Input tab and upload a CSV "
-                        "with a 'Subzone ID' column matching the grid cell IDs (HEX_001, HEX_002, …).",
-                        style="font-size: 0.78rem; color: #6c757d; margin-top: 0.6rem;",
-                    ),
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5(
-                        "4. Annotate with Environmental Covariates",
-                        style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;",
-                    ),
-                    ui.p(
-                        "Enrich each hexagon with habitat and environmental data for "
-                        "Physical Accounts and Species Distribution Modelling (SDM). "
-                        "EUNIS L3 is required for Physical Accounts.",
-                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
-                    ),
-                    ui.input_radio_buttons(
-                        "eunis_source",
-                        "Data source:",
-                        choices={
-                            "auto": "EMODnet online services (automatic)",
-                            "upload": "Upload custom habitat map",
-                        },
-                        selected="auto",
-                    ),
-                    ui.panel_conditional(
-                        "input.eunis_source === 'auto'",
-                        ui.div(
-                            ui.HTML(
-                                "<b>📡 Select layers to fetch:</b>"
+                    ui.accordion_panel(
+                        "3. Generate",
+                        ui.tooltip(
+                            ui.input_action_button(
+                                "generate_grid",
+                                "Generate Grid",
+                                class_="btn-primary",
+                                style="width: 100%; margin-bottom: 0.5rem;",
                             ),
-                            style="font-size: 0.82rem; font-weight: 600; margin-bottom: 0.4rem;",
+                            "Creates a hexagonal H3 grid covering your study area. "
+                            "Land cells are automatically clipped using Natural Earth 10m coastlines.",
+                            placement="right",
+                        ),
+                        ui.tooltip(
+                            ui.download_button(
+                                "download_grid",
+                                "Download GeoJSON",
+                                class_="btn-outline-secondary",
+                                style="width: 100%; margin-bottom: 0.5rem;",
+                            ),
+                            "Download the generated grid as a GeoJSON file for use in GIS software (QGIS, ArcGIS, etc.).",
+                            placement="right",
+                        ),
+                        ui.tooltip(
+                            ui.input_action_button(
+                                "use_grid",
+                                "Use This Grid →",
+                                class_="btn-success",
+                                style="width: 100%;",
+                            ),
+                            "Load this grid into the EVA pipeline as your spatial assessment units (subzones). "
+                            "Proceed to the Data Input tab to upload EC data matched to the Subzone IDs.",
+                            placement="right",
+                        ),
+                        ui.p(
+                            "💡 After clicking 'Use This Grid', go to the Data Input tab and upload a CSV "
+                            "with a 'Subzone ID' column matching the grid cell IDs (HEX_001, HEX_002, …).",
+                            style="font-size: 0.78rem; color: #6c757d; margin-top: 0.6rem;",
+                        ),
+                    ),
+                    ui.accordion_panel(
+                        "4. Environmental Covariates",
+                        ui.p(
+                            "Enrich each hexagon with habitat and environmental data for "
+                            "Physical Accounts and Species Distribution Modelling (SDM). "
+                            "EUNIS L3 is required for Physical Accounts.",
+                            style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                        ),
+                        ui.input_radio_buttons(
+                            "eunis_source",
+                            "Data source:",
+                            choices={
+                                "auto": "EMODnet online services (automatic)",
+                                "upload": "Upload custom habitat map",
+                            },
+                            selected="auto",
+                        ),
+                        ui.panel_conditional(
+                            "input.eunis_source === 'auto'",
+                            ui.div(
+                                ui.HTML("<b>📡 Select layers to fetch:</b>"),
+                                style="font-size: 0.82rem; font-weight: 600; margin-bottom: 0.4rem;",
+                            ),
+                            ui.input_checkbox_group(
+                                "sdm_layers",
+                                None,
+                                choices={
+                                    "eunis2007": "🌿 EUNIS 2007 L3 habitat (EuSEAMAP 2025) — for PA",
+                                    "eunis2019": "🌿 EUNIS 2019 L3 habitat (EuSEAMAP 2025)",
+                                    "substrate": "🪨 Seabed substrate type (rock/sand/mud/gravel)",
+                                    "energy":    "🌊 Energy class (wave/current exposure)",
+                                    "biozone":   "🔵 Biological zone (infralittoral/circalittoral/…)",
+                                    "helcom":    "🇸🇪 HELCOM HUB class (Baltic Sea)",
+                                    "depth":     "📏 Water depth — EMODnet Bathymetry WCS",
+                                },
+                                selected=["eunis2007", "substrate", "energy", "depth"],
+                            ),
+                            ui.div(
+                                ui.HTML(
+                                    "All EuSEAMAP layers share one WMS on "
+                                    "<em>emodnet-seabedhabitats.eu</em>. Depth uses the "
+                                    "EMODnet Bathymetry WCS (~1 MB download). "
+                                    "Requires internet access. Near-shore hexagons may lack data."
+                                ),
+                                style=(
+                                    "font-size: 0.75rem; color: #555; background: #f0f7ff; "
+                                    "border-left: 3px solid #006994; border-radius: 4px; "
+                                    "padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;"
+                                ),
+                            ),
+                            ui.tooltip(
+                                ui.input_action_button(
+                                    "fetch_eunis",
+                                    "🌊 Fetch Selected Layers",
+                                    class_="btn-info",
+                                    style="width: 100%; margin-bottom: 0.4rem; color: white;",
+                                ),
+                                "Downloads the selected EMODnet layers and annotates each hexagon "
+                                "by sampling at the centroid. EUNIS L3 result is automatically "
+                                "loaded into Physical Accounts. A grid must be generated first.",
+                                placement="right",
+                            ),
+                        ),
+                        ui.panel_conditional(
+                            "input.eunis_source === 'upload'",
+                            ui.input_file(
+                                "upload_habitat_source",
+                                "Upload habitat polygon layer:",
+                                accept=[".gpkg", ".geojson", ".json", ".zip"],
+                                multiple=False,
+                                button_label="Browse...",
+                            ),
+                            ui.p(
+                                "GeoPackage (.gpkg), GeoJSON, or zipped Shapefile/FileGDB. "
+                                "Must contain an 'EUNIScomb' column. Any CRS is auto-reprojected.",
+                                style="font-size: 0.78rem; color: #6c757d; margin-top: 0.3rem;",
+                            ),
+                        ),
+                        ui.output_ui("eunis_grid_status"),
+                        ui.tooltip(
+                            ui.download_button(
+                                "download_eunis_overlay",
+                                "Download EUNIS Overlay (.gpkg)",
+                                class_="btn-outline-secondary",
+                                style="width: 100%; margin-top: 0.3rem;",
+                            ),
+                            "Download EUNIS L3 annotation as GeoPackage for Physical Accounts.",
+                            placement="right",
+                        ),
+                        ui.tooltip(
+                            ui.download_button(
+                                "download_sdm_covariates",
+                                "Download SDM Covariates (.csv)",
+                                class_="btn-outline-secondary",
+                                style="width: 100%; margin-top: 0.3rem;",
+                            ),
+                            "Download all fetched environmental covariates as CSV for use in "
+                            "species distribution models (MaxEnt, BRT, Random Forest, etc.).",
+                            placement="right",
+                        ),
+                    ),
+                    ui.accordion_panel(
+                        "5. Copernicus Marine",
+                        ui.p(
+                            "Fetch climatological oceanographic variables for each hexagon "
+                            "from the Copernicus Marine Service (CMEMS). Requires a free "
+                            "account at ",
+                            ui.tags.a(
+                                "marine.copernicus.eu",
+                                href="https://marine.copernicus.eu",
+                                target="_blank",
+                            ),
+                            ".",
+                            style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                        ),
+                        ui.div(
+                            ui.HTML("<b>🔑 Credentials</b>"),
+                            style="font-size: 0.82rem; font-weight: 600; margin-bottom: 0.3rem;",
+                        ),
+                        ui.input_text(
+                            "cmems_username",
+                            None,
+                            placeholder="Username (or set env var COPERNICUSMARINE_SERVICE_USERNAME)",
+                            width="100%",
+                        ),
+                        ui.input_password(
+                            "cmems_password",
+                            None,
+                            placeholder="Password (or set env var COPERNICUSMARINE_SERVICE_PASSWORD)",
+                            width="100%",
+                        ),
+                        ui.div(
+                            ui.HTML("<b>📅 BGC averaging period</b>"),
+                            style="font-size: 0.82rem; font-weight: 600; margin: 0.5rem 0 0.3rem;",
+                        ),
+                        ui.layout_columns(
+                            ui.input_numeric("cmems_start_year", "From", value=2016, min=1993, max=2023, step=1),
+                            ui.input_numeric("cmems_end_year",   "To",   value=2020, min=1993, max=2023, step=1),
+                            col_widths=[6, 6],
+                        ),
+                        ui.div(
+                            ui.HTML("<b>📡 Select variables to fetch:</b>"),
+                            style="font-size: 0.82rem; font-weight: 600; margin: 0.5rem 0 0.3rem;",
                         ),
                         ui.input_checkbox_group(
-                            "sdm_layers",
+                            "cmems_layers",
                             None,
                             choices={
-                                "eunis2007": "🌿 EUNIS 2007 L3 habitat (EuSEAMAP 2025) — for PA",
-                                "eunis2019": "🌿 EUNIS 2019 L3 habitat (EuSEAMAP 2025)",
-                                "substrate": "🪨 Seabed substrate type (rock/sand/mud/gravel)",
-                                "energy":    "🌊 Energy class (wave/current exposure)",
-                                "biozone":   "🔵 Biological zone (infralittoral/circalittoral/…)",
-                                "helcom":    "🇸🇪 HELCOM HUB class (Baltic Sea)",
-                                "depth":     "📏 Water depth — EMODnet Bathymetry WCS",
+                                "sst":           "🌡️ Sea Surface Temperature (SST)",
+                                "bottom_temp":   "🌡️ Bottom Temperature",
+                                "salinity":      "🧂 Sea Surface Salinity (SSS)",
+                                "mld":           "📏 Mixed Layer Depth (MLD)",
+                                "current_speed": "🌊 Surface Current Speed",
+                                "chlorophyll":   "🟢 Chlorophyll-a (Chl-a)",
+                                "oxygen":        "💧 Dissolved Oxygen (O₂)",
+                                "nitrate":       "⚗️ Nitrate (NO₃)",
+                                "ph":            "🧪 Sea Water pH",
+                                "npp":           "🌱 Net Primary Production",
                             },
-                            selected=["eunis2007", "substrate", "energy", "depth"],
+                            selected=["sst", "salinity", "chlorophyll"],
                         ),
                         ui.div(
                             ui.HTML(
-                                "All EuSEAMAP layers share one WMS on "
-                                "<em>emodnet-seabedhabitats.eu</em>. Depth uses the "
-                                "EMODnet Bathymetry WCS (~1 MB download). "
-                                "Requires internet access. Near-shore hexagons may lack data."
+                                "Physics variables (SST, salinity, MLD, currents, bottom temp) use the "
+                                "<em>GLORYS12V1 monthly climatology</em> (1993–2020 baseline). "
+                                "Biogeochemistry variables (Chl-a, O₂, NO₃, pH, NPP) use the "
+                                "<em>PISCES monthly hindcast</em> averaged over the selected period."
                             ),
                             style=(
                                 "font-size: 0.75rem; color: #555; background: #f0f7ff; "
@@ -1133,150 +1246,21 @@ app_ui = ui.page_fluid(
                         ),
                         ui.tooltip(
                             ui.input_action_button(
-                                "fetch_eunis",
-                                "🌊 Fetch Selected Layers",
-                                class_="btn-info",
-                                style="width: 100%; margin-bottom: 0.4rem; color: white;",
+                                "fetch_cmems",
+                                "🛰️ Fetch CMEMS Variables",
+                                class_="btn-primary",
+                                style="width: 100%; margin-bottom: 0.3rem; color: white;",
                             ),
-                            "Downloads the selected EMODnet layers and annotates each hexagon "
-                            "by sampling at the centroid. EUNIS L3 result is automatically "
-                            "loaded into Physical Accounts. A grid must be generated first.",
+                            "Downloads selected Copernicus Marine variables and annotates each "
+                            "hexagon by sampling at the centroid. Data is added to the SDM "
+                            "covariates table and can be exported with the button above.",
                             placement="right",
                         ),
+                        ui.output_ui("cmems_status"),
                     ),
-                    ui.panel_conditional(
-                        "input.eunis_source === 'upload'",
-                        ui.input_file(
-                            "upload_habitat_source",
-                            "Upload habitat polygon layer:",
-                            accept=[".gpkg", ".geojson", ".json", ".zip"],
-                            multiple=False,
-                            button_label="Browse...",
-                        ),
-                        ui.p(
-                            "GeoPackage (.gpkg), GeoJSON, or zipped Shapefile/FileGDB. "
-                            "Must contain an 'EUNIScomb' column. Any CRS is auto-reprojected.",
-                            style="font-size: 0.78rem; color: #6c757d; margin-top: 0.3rem;",
-                        ),
-                    ),
-                    ui.output_ui("eunis_grid_status"),
-                    ui.tooltip(
-                        ui.download_button(
-                            "download_eunis_overlay",
-                            "Download EUNIS Overlay (.gpkg)",
-                            class_="btn-outline-secondary",
-                            style="width: 100%; margin-top: 0.3rem;",
-                        ),
-                        "Download EUNIS L3 annotation as GeoPackage for Physical Accounts.",
-                        placement="right",
-                    ),
-                    ui.tooltip(
-                        ui.download_button(
-                            "download_sdm_covariates",
-                            "Download SDM Covariates (.csv)",
-                            class_="btn-outline-secondary",
-                            style="width: 100%; margin-top: 0.3rem;",
-                        ),
-                        "Download all fetched environmental covariates as CSV for use in "
-                        "species distribution models (MaxEnt, BRT, Random Forest, etc.).",
-                        placement="right",
-                    ),
-                ),
-                ui.hr(),
-                # ── Section 5: Copernicus Marine ─────────────────────────────
-                ui.div(
-                    ui.h5(
-                        "5. Copernicus Marine Covariates",
-                        style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;",
-                    ),
-                    ui.p(
-                        "Fetch climatological oceanographic variables for each hexagon "
-                        "from the Copernicus Marine Service (CMEMS). Requires a free "
-                        "account at ",
-                        ui.tags.a(
-                            "marine.copernicus.eu",
-                            href="https://marine.copernicus.eu",
-                            target="_blank",
-                        ),
-                        ".",
-                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
-                    ),
-                    # Credentials
-                    ui.div(
-                        ui.HTML("<b>🔑 Credentials</b>"),
-                        style="font-size: 0.82rem; font-weight: 600; margin-bottom: 0.3rem;",
-                    ),
-                    ui.input_text(
-                        "cmems_username",
-                        None,
-                        placeholder="Username (or set env var COPERNICUSMARINE_SERVICE_USERNAME)",
-                        width="100%",
-                    ),
-                    ui.input_password(
-                        "cmems_password",
-                        None,
-                        placeholder="Password (or set env var COPERNICUSMARINE_SERVICE_PASSWORD)",
-                        width="100%",
-                    ),
-                    # BGC year range
-                    ui.div(
-                        ui.HTML("<b>📅 BGC averaging period</b>"),
-                        style="font-size: 0.82rem; font-weight: 600; margin: 0.5rem 0 0.3rem;",
-                    ),
-                    ui.layout_columns(
-                        ui.input_numeric("cmems_start_year", "From", value=2016, min=1993, max=2023, step=1),
-                        ui.input_numeric("cmems_end_year",   "To",   value=2020, min=1993, max=2023, step=1),
-                        col_widths=[6, 6],
-                    ),
-                    # Layer selection
-                    ui.div(
-                        ui.HTML("<b>📡 Select variables to fetch:</b>"),
-                        style="font-size: 0.82rem; font-weight: 600; margin: 0.5rem 0 0.3rem;",
-                    ),
-                    ui.input_checkbox_group(
-                        "cmems_layers",
-                        None,
-                        choices={
-                            "sst":           "🌡️ Sea Surface Temperature (SST)",
-                            "bottom_temp":   "🌡️ Bottom Temperature",
-                            "salinity":      "🧂 Sea Surface Salinity (SSS)",
-                            "mld":           "📏 Mixed Layer Depth (MLD)",
-                            "current_speed": "🌊 Surface Current Speed",
-                            "chlorophyll":   "🟢 Chlorophyll-a (Chl-a)",
-                            "oxygen":        "💧 Dissolved Oxygen (O₂)",
-                            "nitrate":       "⚗️ Nitrate (NO₃)",
-                            "ph":            "🧪 Sea Water pH",
-                            "npp":           "🌱 Net Primary Production",
-                        },
-                        selected=["sst", "salinity", "chlorophyll"],
-                    ),
-                    # Info note
-                    ui.div(
-                        ui.HTML(
-                            "Physics variables (SST, salinity, MLD, currents, bottom temp) use the "
-                            "<em>GLORYS12V1 monthly climatology</em> (1993–2020 baseline). "
-                            "Biogeochemistry variables (Chl-a, O₂, NO₃, pH, NPP) use the "
-                            "<em>PISCES monthly hindcast</em> averaged over the selected period."
-                        ),
-                        style=(
-                            "font-size: 0.75rem; color: #555; background: #f0f7ff; "
-                            "border-left: 3px solid #006994; border-radius: 4px; "
-                            "padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;"
-                        ),
-                    ),
-                    ui.tooltip(
-                        ui.input_action_button(
-                            "fetch_cmems",
-                            "🛰️ Fetch CMEMS Variables",
-                            class_="btn-primary",
-                            style="width: 100%; margin-bottom: 0.3rem; color: white;",
-                        ),
-                        "Downloads selected Copernicus Marine variables and annotates each "
-                        "hexagon by sampling at the centroid. Data is added to the SDM "
-                        "covariates table and can be exported with the button above.",
-                        placement="right",
-                    ),
-                    ui.output_ui("cmems_status"),
+                    id="grid_setup_accordion",
+                    open=["1. Define Study Area", "2. Grid Parameters", "3. Generate"],
+                    multiple=True,
                 ),
                 width=380,
             ),
