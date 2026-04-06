@@ -32,9 +32,9 @@ EUSM_WMS_URL = "https://ows.emodnet-seabedhabitats.eu/geoserver/emodnet_view/wms
 # Available EuSEAMAP 2025 layers with column naming and labels.
 #
 # Layer naming convention: _full = full detail (renders only at high zoom ~1:500k).
-# _400 = 400m simplified (renders down to ~1:3M). Our 2°×2° tiles at 1024px are
-# ~1:440k–1:3M depending on latitude, so _400 variants are required.
-# Exception: eusm2025_subs_full uses simple polygon fill (few colours, no AA issue).
+# _400 = 400m simplified (renders down to ~1:3M). Our 2°×2° tiles at 512px are
+# ~1:880k–1:6M depending on latitude, so _400 variants are required.
+# Note: the GeoServer has a 512px image size limit — 1024px returns blank tiles.
 #
 # Coverage notes (verified via WMS tile inspection):
 #   eunis2007, eunis2019, substrate, biozone, msfd: pan-European incl. Mediterranean
@@ -56,7 +56,7 @@ EUSM_LAYERS: dict = {
         "coverage": "pan-European",
     },
     "substrate": {
-        "wms_layer": "eusm2025_subs_full",
+        "wms_layer": "eusm2025_subs_400",
         "col": "substrate_type",
         "name_col": "substrate_type_name",
         "label": "Seabed Substrate Type",
@@ -94,7 +94,7 @@ BATHY_COVERAGE = "emodnet:mean"
 
 # ── Shared HTTP / tile settings ───────────────────────────────────────────────
 _MAX_TILE_DEG = 2.0
-_TILE_PX = 1024
+_TILE_PX = 512  # EMODnet GeoServer maxImageSize limit — 1024px returns blank tiles
 
 _SSL_CTX = ssl.create_default_context()
 _SSL_CTX.check_hostname = False

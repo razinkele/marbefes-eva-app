@@ -319,9 +319,9 @@ class TestLayerConfig(unittest.TestCase):
         self.assertIn("_400", wms)
 
     def test_substrate_keeps_full(self):
-        # subs_full has clean fills (3-5 unique colors), no AA issue
+        # subs_400 used because GeoServer 512px limit makes subs_full blank at our tile size
         wms = eva_eunis_wms.EUSM_LAYERS["substrate"]["wms_layer"]
-        self.assertIn("subs_full", wms)
+        self.assertIn("subs_400", wms)
 
     def test_all_layers_have_coverage_note(self):
         for key, cfg in eva_eunis_wms.EUSM_LAYERS.items():
