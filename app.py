@@ -29,6 +29,7 @@ import eva_visualizations
 import eva_map
 import eva_hexgrid
 import eva_eunis_wms
+import eva_cmems
 import dwca_reader
 from eva_ui import app_ui, get_aq_guide_html
 
@@ -417,6 +418,8 @@ def server(input, output, session):
         "bio_zone":            "Biological Zone",
         "helcom_class":        "HELCOM HUB Class",
         "depth_m":             "Water Depth (m)",
+        # Copernicus Marine
+        **{col: lbl for col, lbl in eva_cmems.CMEMS_MAP_COLS.items()},
     }
 
     def _covariate_choices() -> dict:
@@ -2599,6 +2602,105 @@ def server(input, output, session):
         buf = io.StringIO()
         df.to_csv(buf, index=False)
         yield buf.getvalue().encode()
+
+    # ── Copernicus Marine fetch ───────────────────────────────────────────────
+    @reactive.effect
+    @reactive.event(input.fetch_cmems)
+    def handle_fetch_cmems():
+        grid = generated_grid.get()
+        if grid is None:
+            ui.notification_show("⚠️ Generate a hex grid first.", type="warning")
+            return
+
+        layers = list(input.cmems_layers()) if input.cmems_layers() else []
+        if not layers:
+            ui.notification_show("⚠️ Select at least one CMEMS variable.", type="warning")
+            return
+
+        username = (input.cmems_username() or "").strip()
+        password = (input.cmems_password() or "").strip()
+        # Also accept env vars (handled inside fetch_cmems_covariates)
+
+        bgc_start = int(input.cmems_start_year())
+        bgc_end   = int(input.cmems_end_year())
+        if bgc_start > bgc_end:
+            ui.notification_show("⚠️ BGC start year must be ≤ end year.", type="warning")
+            return
+
+        ui.notification_show("🛰️ Connecting to Copernicus Marine Service…", type="message", duration=None, id="cmems-progress")
+
+        try:
+            covariates = eva_cmems.fetch_cmems_covariates(
+                grid_gdf=grid,
+                layers=layers,
+                username=username,
+                password=password,
+                bgc_start_year=bgc_start,
+                bgc_end_year=bgc_end,
+            )
+
+            # Merge with existing SDM covariates if present
+            existing = sdm_covariates.get()
+            if existing is not None:
+                new_cols = [c for c in covariates.columns if c not in existing.columns]
+                for col in new_cols:
+                    existing = existing.copy()
+                    existing[col] = covariates[col].values
+                sdm_covariates.set(existing)
+            else:
+                sdm_covariates.set(covariates)
+
+            # Report per-layer results
+            msgs = []
+            for lk in layers:
+                col = eva_cmems.CMEMS_LAYERS[lk]["col"]
+                cov_gdf = sdm_covariates.get()
+                if cov_gdf is not None and col in cov_gdf.columns:
+                    n = int(cov_gdf[col].notna().sum())
+                    total = len(cov_gdf)
+                    unit  = eva_cmems.CMEMS_LAYERS[lk]["unit"]
+                    mean_val = cov_gdf[col].mean()
+                    msgs.append(f"• {eva_cmems.CMEMS_LAYERS[lk]['label']}: {n}/{total} hexagons"
+                                f" (mean={mean_val:.3g} {unit})")
+                    if n == 0:
+                        ui.notification_show(
+                            f"⚠️ {eva_cmems.CMEMS_LAYERS[lk]['label']}: no data for this area.",
+                            type="warning",
+                        )
+
+            ui.notification_show(
+                f"✅ CMEMS fetch complete: {len(layers)} variable(s) added.\n" + "\n".join(msgs),
+                type="message",
+                duration=8,
+                id="cmems-progress",
+            )
+
+        except ValueError as exc:
+            ui.notification_show(str(exc), type="error", id="cmems-progress")
+        except Exception as exc:
+            ui.notification_show(
+                f"❌ CMEMS fetch failed: {exc}", type="error", id="cmems-progress"
+            )
+
+    @output
+    @render.ui
+    def cmems_status():
+        cov = sdm_covariates.get()
+        if cov is None:
+            return ui.div()
+        cmems_cols = [c for c in eva_cmems.CMEMS_MAP_COLS if c in cov.columns]
+        if not cmems_cols:
+            return ui.div()
+        rows = []
+        for col in cmems_cols:
+            lbl = eva_cmems.CMEMS_MAP_COLS[col]
+            n = int(cov[col].notna().sum())
+            mean_v = cov[col].mean()
+            rows.append(ui.tags.li(f"{lbl}: {n} hexagons, mean={mean_v:.3g}"))
+        return ui.div(
+            ui.tags.ul(*rows, style="font-size: 0.78rem; margin: 0.3rem 0 0 1rem; color: #28a745;"),
+            class_="info-box",
+        )
 
     @output
     @render.ui

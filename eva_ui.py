@@ -701,6 +701,102 @@ app_ui = ui.page_navbar(
                         placement="right",
                     ),
                 ),
+                ui.hr(),
+                # ── Section 5: Copernicus Marine ─────────────────────────────
+                ui.div(
+                    ui.h5(
+                        "5. Copernicus Marine Covariates",
+                        style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;",
+                    ),
+                    ui.p(
+                        "Fetch climatological oceanographic variables for each hexagon "
+                        "from the Copernicus Marine Service (CMEMS). Requires a free "
+                        "account at ",
+                        ui.tags.a(
+                            "marine.copernicus.eu",
+                            href="https://marine.copernicus.eu",
+                            target="_blank",
+                        ),
+                        ".",
+                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                    ),
+                    # Credentials
+                    ui.div(
+                        ui.HTML("<b>🔑 Credentials</b>"),
+                        style="font-size: 0.82rem; font-weight: 600; margin-bottom: 0.3rem;",
+                    ),
+                    ui.input_text(
+                        "cmems_username",
+                        None,
+                        placeholder="Username (or set env var COPERNICUSMARINE_SERVICE_USERNAME)",
+                        width="100%",
+                    ),
+                    ui.input_password(
+                        "cmems_password",
+                        None,
+                        placeholder="Password (or set env var COPERNICUSMARINE_SERVICE_PASSWORD)",
+                        width="100%",
+                    ),
+                    # BGC year range
+                    ui.div(
+                        ui.HTML("<b>📅 BGC averaging period</b>"),
+                        style="font-size: 0.82rem; font-weight: 600; margin: 0.5rem 0 0.3rem;",
+                    ),
+                    ui.layout_columns(
+                        ui.input_numeric("cmems_start_year", "From", value=2016, min=1993, max=2023, step=1),
+                        ui.input_numeric("cmems_end_year",   "To",   value=2020, min=1993, max=2023, step=1),
+                        col_widths=[6, 6],
+                    ),
+                    # Layer selection
+                    ui.div(
+                        ui.HTML("<b>📡 Select variables to fetch:</b>"),
+                        style="font-size: 0.82rem; font-weight: 600; margin: 0.5rem 0 0.3rem;",
+                    ),
+                    ui.input_checkbox_group(
+                        "cmems_layers",
+                        None,
+                        choices={
+                            "sst":           "🌡️ Sea Surface Temperature (SST)",
+                            "bottom_temp":   "🌡️ Bottom Temperature",
+                            "salinity":      "🧂 Sea Surface Salinity (SSS)",
+                            "mld":           "📏 Mixed Layer Depth (MLD)",
+                            "current_speed": "🌊 Surface Current Speed",
+                            "chlorophyll":   "🟢 Chlorophyll-a (Chl-a)",
+                            "oxygen":        "💧 Dissolved Oxygen (O₂)",
+                            "nitrate":       "⚗️ Nitrate (NO₃)",
+                            "ph":            "🧪 Sea Water pH",
+                            "npp":           "🌱 Net Primary Production",
+                        },
+                        selected=["sst", "salinity", "chlorophyll"],
+                    ),
+                    # Info note
+                    ui.div(
+                        ui.HTML(
+                            "Physics variables (SST, salinity, MLD, currents, bottom temp) use the "
+                            "<em>GLORYS12V1 monthly climatology</em> (1993–2020 baseline). "
+                            "Biogeochemistry variables (Chl-a, O₂, NO₃, pH, NPP) use the "
+                            "<em>PISCES monthly hindcast</em> averaged over the selected period."
+                        ),
+                        style=(
+                            "font-size: 0.75rem; color: #555; background: #f0f7ff; "
+                            "border-left: 3px solid #006994; border-radius: 4px; "
+                            "padding: 0.4rem 0.6rem; margin-bottom: 0.5rem;"
+                        ),
+                    ),
+                    ui.tooltip(
+                        ui.input_action_button(
+                            "fetch_cmems",
+                            "🛰️ Fetch CMEMS Variables",
+                            class_="btn-primary",
+                            style="width: 100%; margin-bottom: 0.3rem; color: white;",
+                        ),
+                        "Downloads selected Copernicus Marine variables and annotates each "
+                        "hexagon by sampling at the centroid. Data is added to the SDM "
+                        "covariates table and can be exported with the button above.",
+                        placement="right",
+                    ),
+                    ui.output_ui("cmems_status"),
+                ),
                 width=380,
             ),
             ui.div(
