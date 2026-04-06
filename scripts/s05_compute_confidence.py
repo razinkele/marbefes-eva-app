@@ -21,7 +21,7 @@ def classify_confidence(score: float) -> str:
     """Classify a confidence score into Low / Medium / High.
 
     Thresholds are calibrated for the current EC_CONFIDENCE weights (max weight=3):
-      - Maximum achievable score = weight * n_answered/n_max * n_max = 3.0
+      - Maximum achievable score (when n_answered == n_max) = weight = 3.0
       - Low:    score <= 1.0  (≤ 33% of max)
       - Medium: 1.0 < score <= 2.0  (33–67% of max)
       - High:   score > 2.0  (> 67% of max)

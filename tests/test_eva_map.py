@@ -5,7 +5,7 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from eva_map import auto_zoom_level, _build_legend_html, create_ev_map
+from eva_map import auto_zoom_level, _build_legend_html, create_ev_map, create_grid_only_map, create_habitat_map
 import geopandas as gpd
 from shapely.geometry import box
 
@@ -123,3 +123,54 @@ class TestCreateEvMap:
         html = create_ev_map(gdf, "EV", "Viridis", "EVA 5-class (VL/L/M/H/VH)", "CartoDB Positron", 0.7)
         assert isinstance(html, str)
         assert len(html) > 100
+
+
+# ── create_grid_only_map smoke tests ────────────────────────────────────────
+
+class TestCreateGridOnlyMap:
+    def _make_gdf(self):
+        return gpd.GeoDataFrame(
+            {"Subzone ID": ["A1", "A2", "A3"]},
+            geometry=[box(21.0, 55.5, 21.1, 55.6), box(21.1, 55.5, 21.2, 55.6), box(21.2, 55.5, 21.3, 55.6)],
+            crs="EPSG:4326",
+        )
+
+    def test_returns_html_string(self):
+        html = create_grid_only_map(self._make_gdf())
+        assert isinstance(html, str)
+        assert "leaflet" in html.lower() or "folium" in html.lower()
+        assert len(html) > 100
+
+    def test_shows_subzone_count_in_legend(self):
+        html = create_grid_only_map(self._make_gdf())
+        assert "3 subzones" in html
+
+
+# ── create_habitat_map smoke tests ───────────────────────────────────────────
+
+class TestCreateHabitatMap:
+    def _make_gdf(self):
+        return gpd.GeoDataFrame(
+            {"Subzone ID": ["A1", "A2"]},
+            geometry=[box(21.0, 55.5, 21.1, 55.6), box(21.1, 55.5, 21.2, 55.6)],
+            crs="EPSG:4326",
+        )
+
+    def test_returns_html_string(self):
+        assignments = {"A1": "A5.53", "A2": "MC35"}
+        html = create_habitat_map(self._make_gdf(), assignments, "CartoDB Positron", 0.7)
+        assert isinstance(html, str)
+        assert len(html) > 100
+
+    def test_legend_shows_habitat_codes(self):
+        assignments = {"A1": "A5.53", "A2": "MC35"}
+        html = create_habitat_map(self._make_gdf(), assignments, "CartoDB Positron", 0.7)
+        assert "A5.53" in html
+        assert "MC35" in html
+
+    def test_layer_control_present(self):
+        assignments = {"A1": "A5.53", "A2": "MC35"}
+        html = create_habitat_map(self._make_gdf(), assignments, "CartoDB Positron", 0.7)
+        # LayerControl JS is entity-encoded inside the iframe srcdoc
+        assert "control.layers" in html or "layer_control" in html
+

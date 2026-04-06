@@ -529,3 +529,132 @@ class TestAQ9Concentration:
         aq9 = calculate_aq9_special(df, cls)
         assert aq9['X'].max() == pytest.approx(MAX_EV_SCALE)
         assert aq9['X'].min() >= 0
+
+
+# ---------------------------------------------------------------------------
+# TestMergeMultiEcEv
+# ---------------------------------------------------------------------------
+
+class TestMergeMultiEcEv:
+    """Tests for merge_multi_ec_ev — multi-EC aggregation."""
+
+    from eva_calculations import merge_multi_ec_ev
+    from eva_config import ECEntry
+
+    def _make_ec_store(self, ec_data):
+        """Build a minimal ec_store dict from {name: {subzone: ev_value}}."""
+        import pandas as pd
+        from eva_config import ECEntry
+        store = {}
+        for ec_name, sv_map in ec_data.items():
+            subzones = list(sv_map.keys())
+            ev_values = list(sv_map.values())
+            results_df = pd.DataFrame({"Subzone ID": subzones, "EV": ev_values})
+            data_df = pd.DataFrame({"Subzone ID": subzones})
+            entry = ECEntry(data=data_df, data_type="qualitative", classifications={})
+            entry.results = results_df
+            store[ec_name] = entry
+        return store
+
+    def test_single_ec_returns_result(self):
+        """merge_multi_ec_ev with 1 EC returns single-EC result (Total EV = that EC's EV)."""
+        from eva_calculations import merge_multi_ec_ev
+        store = self._make_ec_store({"EC1": {"A": 2.0, "B": 3.0}})
+        result = merge_multi_ec_ev(store)
+        assert result is not None
+        ev_by_subzone = result.set_index("Subzone ID")["Total EV"]
+        assert ev_by_subzone["A"] == pytest.approx(2.0)
+        assert ev_by_subzone["B"] == pytest.approx(3.0)
+
+    def test_two_ecs_max_correct(self):
+        """Total EV = max of EC1 and EC2 per subzone."""
+        from eva_calculations import merge_multi_ec_ev
+        store = self._make_ec_store({
+            "EC1": {"A": 2.0, "B": 1.0, "C": 4.0},
+            "EC2": {"A": 3.0, "B": 5.0, "C": 0.5},
+        })
+        merged = merge_multi_ec_ev(store)
+        assert merged is not None
+        ev_by_subzone = merged.set_index("Subzone ID")["Total EV"]
+        assert ev_by_subzone["A"] == pytest.approx(3.0)
+        assert ev_by_subzone["B"] == pytest.approx(5.0)
+        assert ev_by_subzone["C"] == pytest.approx(4.0)
+
+    def test_mismatched_subzones_outer_join(self):
+        """Subzones absent from one EC get EV=0 from that EC (outer join + fillna(0))."""
+        from eva_calculations import merge_multi_ec_ev
+        store = self._make_ec_store({
+            "EC1": {"A": 2.0, "B": 3.0},
+            "EC2": {"B": 1.0, "C": 4.0},  # A not in EC2, C not in EC1
+        })
+        merged = merge_multi_ec_ev(store)
+        assert merged is not None
+        ev_by_subzone = merged.set_index("Subzone ID")["Total EV"]
+        # A: EC1=2.0, EC2=0 (absent) → max=2.0
+        assert ev_by_subzone["A"] == pytest.approx(2.0)
+        # C: EC1=0 (absent), EC2=4.0 → max=4.0
+        assert ev_by_subzone["C"] == pytest.approx(4.0)
+        # B: EC1=3.0, EC2=1.0 → max=3.0
+        assert ev_by_subzone["B"] == pytest.approx(3.0)
+
+    def test_ec_with_none_results_skipped(self):
+        """ECs with results=None should be skipped without error."""
+        from eva_calculations import merge_multi_ec_ev
+        from eva_config import ECEntry
+        store = self._make_ec_store({
+            "EC1": {"A": 2.0, "B": 3.0},
+            "EC2": {"A": 1.0, "B": 5.0},
+        })
+        # Add a third EC with no results
+        null_entry = ECEntry(data=pd.DataFrame(), data_type="qualitative", classifications={})
+        null_entry.results = None
+        store["EC3"] = null_entry
+        merged = merge_multi_ec_ev(store)
+        # Should still work with 2 valid ECs
+        assert merged is not None
+        ev_by_subzone = merged.set_index("Subzone ID")["Total EV"]
+        assert ev_by_subzone["B"] == pytest.approx(5.0)
+
+
+# ---------------------------------------------------------------------------
+# TestLRFDenominator (CW2 regression test)
+# ---------------------------------------------------------------------------
+
+class TestLRFDenominator:
+    """Regression tests for classify_features LRF/ROF denominator fix.
+
+    Feature in 1 out of N subzones should use N (total rows, including NaN)
+    as denominator, not just the non-NaN count.
+    """
+
+    def test_nan_does_not_inflate_proportion(self):
+        """1 presence, 19 valid + 1 NaN = 1/20 = 5% → LRF (not ROF)."""
+        df = pd.DataFrame({
+            "Subzone ID": [f"S{i}" for i in range(20)],
+            "Sp1": [1.0] + [0.0] * 18 + [float("nan")],
+        })
+        cls = classify_features(df, {})
+        # proportion = 1/20 = 5% ≤ 5% threshold → LRF
+        assert cls["LRF"]["Sp1"] == 1, "Sp1 should be LRF (1/20 = exactly 5%)"
+        assert cls["ROF"]["Sp1"] == 0
+
+    def test_complete_data_lrf_boundary(self):
+        """Exactly 1/20 = 5% with no NaN → LRF."""
+        df = pd.DataFrame({
+            "Subzone ID": [f"S{i}" for i in range(20)],
+            "Sp1": [1.0] + [0.0] * 19,
+        })
+        cls = classify_features(df, {})
+        assert cls["LRF"]["Sp1"] == 1
+        assert cls["ROF"]["Sp1"] == 0
+
+    def test_above_threshold_is_rof(self):
+        """2/20 = 10% → ROF regardless of NaN count."""
+        df = pd.DataFrame({
+            "Subzone ID": [f"S{i}" for i in range(20)],
+            "Sp1": [1.0, 1.0] + [0.0] * 18,
+        })
+        cls = classify_features(df, {})
+        assert cls["ROF"]["Sp1"] == 1
+        assert cls["LRF"]["Sp1"] == 0
+

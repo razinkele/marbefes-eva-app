@@ -74,7 +74,7 @@ def _build_pa_summary_sheet(ws, metadata, extent_df, completeness):
         ("EAA Name", metadata.get("eaa_name", "")),
         ("Boundary Description", metadata.get("boundary_description", "")),
         ("Accounting Year", metadata.get("accounting_year", "")),
-        ("Data Completeness", str(completeness)),
+        ("Data Completeness", f"{completeness.get('pct', 0):.1f}% ({completeness.get('filled', 0)}/{completeness.get('total', 0)} cells)" if isinstance(completeness, dict) else str(completeness)),
         ("Habitat Count", habitat_count),
         ("Total Extent", f"{total_extent:,.4f}"),
         ("", ""),

@@ -286,6 +286,17 @@ def server(input, output, session):
 
         # 3. Convert feature columns to numeric, but preserve NaN
         feature_cols = [col for col in df.columns if col != 'Subzone ID']
+
+        # Guard against excessive feature columns that would overwhelm the UI
+        if len(feature_cols) > MAX_FEATURES:
+            uploaded_data.set(None)
+            ui.notification_show(
+                f"Too many feature columns ({len(feature_cols)}). Maximum is {MAX_FEATURES}. "
+                "Please reduce the number of species/variables in your CSV.",
+                type="error", duration=10,
+            )
+            return
+
         for col in feature_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
 
@@ -471,6 +482,9 @@ def server(input, output, session):
             ui.notification_show("Polygon captured from map", type="message", duration=3)
         except ValueError as e:
             ui.notification_show(f"Invalid polygon: {e}", type="error", duration=6)
+        except Exception as e:
+            logger.error("Unexpected error parsing drawn polygon: %s", e)
+            ui.notification_show(f"Could not process polygon: {e}", type="error", duration=6)
 
     @reactive.Effect
     @reactive.event(input.generate_grid)
@@ -636,8 +650,8 @@ def server(input, output, session):
 
         try:
             if file_name.endswith('.zip'):
-                # Zipped shapefile - read via zip:// protocol
-                gdf = gpd.read_file(f"zip://{file_path}")
+                # Zipped shapefile — use POSIX path for a valid zip:// URI
+                gdf = gpd.read_file(f"zip://{Path(file_path).as_posix()}")
             else:
                 # GeoJSON, GeoPackage, or other formats geopandas supports
                 gdf = gpd.read_file(file_path)
@@ -847,7 +861,10 @@ def server(input, output, session):
                                     ui.br(),
                                     f"• Average unique values per feature: {avg_unique:.1f}",
                                     ui.br(),
-                                    f"• Data range: {df[feature_cols].values.min():.2f} to {df[feature_cols].values.max():.2f}",
+                                    (
+                                        f"• Data range: {df[feature_cols].values.min():.2f} to {df[feature_cols].values.max():.2f}"
+                                        if feature_cols else "• Data range: N/A (no feature columns)"
+                                    ),
                                     ui.br(),
                                     "• Qualitative: Binary (0/1) or few unique values",
                                     ui.br(),
@@ -1110,13 +1127,8 @@ def server(input, output, session):
             df_indexed = df.set_index('Subzone ID')
             aq_results_indexed = aq_results.set_index('Subzone ID')
 
-            # Reindex both DataFrames to ensure they have the same subzones
-            # Use union of all subzones to handle missing data
-            all_subzones = df_indexed.index.union(aq_results_indexed.index)
-            df_indexed = df_indexed.reindex(all_subzones, fill_value=0)
-            aq_results_indexed = aq_results_indexed.reindex(all_subzones, fill_value=np.nan)
-
-            # Now concatenate with matching indices
+            # aq_results is derived from df, so indices are always identical;
+            # no reindex needed — just concatenate on matching axes
             results = pd.concat([df_indexed, aq_results_indexed], axis=1).reset_index()
 
             return results
@@ -1328,13 +1340,13 @@ def server(input, output, session):
             <tbody>
         """
 
-        # Identify AQ columns for max-highlighting
-        aq_cols = [col for col in display_cols if col.startswith('AQ')]
+        # Identify AQ columns for max-highlighting (exclude EV)
+        aq_highlight_cols = [col for col in display_cols if col.startswith('AQ')]
 
         # Add data rows
         for idx, row in display_df.iterrows():
             # Find the AQ column with the max value for this row
-            aq_values = {col: row[col] for col in aq_cols if pd.notna(row[col]) and isinstance(row[col], (int, float)) and row[col] > 0}
+            aq_values = {col: row[col] for col in aq_highlight_cols if pd.notna(row[col]) and isinstance(row[col], (int, float)) and row[col] > 0}
             max_aq_col = max(aq_values, key=aq_values.get) if aq_values else None
 
             html += "<tr>"
@@ -1400,7 +1412,7 @@ def server(input, output, session):
                 ui.card(
                     ui.card_header(f"Aggregated Total EV ({len(ec_names)} ECs)"),
                     ui.layout_column_wrap(
-                        ui.value_box("Total EV (Max)", f"{total_ev:.2f}", theme="primary"),
+                        ui.value_box("Total EV (Sum)", f"{total_ev:.2f}", theme="primary"),
                         ui.value_box("Average Total EV", f"{avg_ev:.2f}", theme="info"),
                         ui.value_box("Max Total EV", f"{max_ev:.2f}", theme="success"),
                         ui.value_box("Min Total EV", f"{min_ev:.2f}", theme="warning"),
@@ -1471,7 +1483,10 @@ def server(input, output, session):
 
         rows = []
         for ec_name, ec in store.items():
-            mean_ev = ec['results']['EV'].mean() if ec['results'] is not None else 0
+            try:
+                mean_ev = ec['results']['EV'].mean() if ec['results'] is not None else 0
+            except (KeyError, AttributeError):
+                mean_ev = 0
             rows.append({
                 'EC Name': ec_name,
                 'Data Type': ec['data_type'],
@@ -1567,6 +1582,7 @@ def server(input, output, session):
         validation_report.set(None)
         dwca_info.set(None)
         geo_match_info.set(None)
+        eunis_overlay.set(None)
         current_ec.set(None)
         ui.update_text("ec_name", value="")
         ui.update_select("data_type", selected="TO SPECIFY")
@@ -1604,7 +1620,9 @@ def server(input, output, session):
             entry = store[ec_name].copy()
             entry.results = results.copy()
             entry.classifications = feature_classifications.get().copy()
-            entry.data_type = input.data_type()
+            # Use detected_data_type (set synchronously on upload/restore) rather than
+            # input.data_type() which may lag one flush behind during EC restore.
+            entry.data_type = detected_data_type.get() or input.data_type()
             updated[ec_name] = entry
             ec_store.set(updated)
 
@@ -2164,15 +2182,25 @@ def server(input, output, session):
         file_info = input.upload_eunis_overlay()
         if file_info is None or len(file_info) == 0:
             return
+        file_name = file_info[0].get("name", "").lower()
+        allowed_exts = (".gpkg", ".geojson", ".json", ".zip", ".shp")
+        if not any(file_name.endswith(ext) for ext in allowed_exts):
+            ui.notification_show(
+                f"Unsupported file type for EUNIS overlay. Please upload a GeoPackage (.gpkg), GeoJSON, or zipped shapefile.",
+                type="error", duration=8,
+            )
+            return
         try:
             gdf = eunis_data.load_eunis_overlay(file_info[0]["datapath"])
             eunis_overlay.set(gdf)
-            # Auto-populate habitat assignments from overlay
-            assignments = {
-                row["Subzone_ID"]: row["dominant_EUNIS"]
-                for _, row in gdf.iterrows()
-                if pd.notna(row.get("dominant_EUNIS"))
-            }
+            # Auto-populate habitat assignments from overlay (vectorized)
+            has_eunis = gdf["dominant_EUNIS"].notna()
+            assignments = (
+                gdf.loc[has_eunis]
+                .set_index("Subzone_ID")["dominant_EUNIS"]
+                .astype(str)
+                .to_dict()
+            )
             pa_habitat_assignments.set(assignments)
             n_types = gdf["dominant_EUNIS"].nunique()
             n_with = gdf["dominant_EUNIS"].notna().sum()
@@ -2250,7 +2278,6 @@ def server(input, output, session):
         if overlay is None:
             ui.notification_show("Upload a EUNIS overlay first.", type="warning")
             return None
-        from pa_export import generate_bbt8_workbook
 
         eva = cached_eva_data()
         if eva is None:
@@ -2291,7 +2318,7 @@ def server(input, output, session):
             "EVA Version": f"MARBEFES EVA v{get_version()}",
         }
 
-        return generate_bbt8_workbook(
+        return pa_export.generate_bbt8_workbook(
             accounts=accounts, main_values=mv, extent=extent,
             condition=condition, supply=supply, metadata=metadata,
             missing_values=missing,

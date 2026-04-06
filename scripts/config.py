@@ -27,8 +27,8 @@ EC_CONFIDENCE = {
     "Zooplankton":   (1, 7, 2),
     "Phytoplankton": (1, 7, 3),
     "Benthos":       (4, 8, 3),
-    "Fish_CL":       (1, 7, 2),
-    "Fish_BS":       (2, 7, 3),
+    # "Fish_CL" and "Fish_BS" removed — these keys can never appear as
+    # Dominant_EC because only EC_SCORE_COLUMNS keys ("Fish") are used.
     "Fish":          (2, 7, 3),
 }
 

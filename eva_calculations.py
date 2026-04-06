@@ -160,7 +160,10 @@ def classify_features(
     for col in feature_cols:
         # Intrinsic classification based on data
         positive_count = (df[col] > 0).sum()
-        total_count = df[col].notna().sum()
+        # Use the total subzone count (including NaN rows) as the denominator so
+        # that missing data does not artificially inflate the "local rarity" proportion.
+        # E.g., 1 presence in 19 valid + 1 NaN = 1/20 (LRF), not 1/19 (ROF).
+        total_count = len(df[col])
         proportion = positive_count / total_count if total_count > 0 else 0
 
         if proportion == 0:

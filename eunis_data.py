@@ -32,8 +32,8 @@ def compute_eunis_extent(eunis_gdf: gpd.GeoDataFrame, unit: str = "Ha") -> pd.Da
     if gdf.crs is not None and gdf.crs.is_projected:
         metric = gdf  # already metric (e.g., EPSG:3346)
     else:
-        from pa_calculations import _reproject_to_metric
-        metric = _reproject_to_metric(gdf, original_crs=gdf.crs)
+        from pa_calculations import reproject_to_metric
+        metric = reproject_to_metric(gdf, original_crs=gdf.crs)
     conversion = AREA_CONVERSIONS.get(unit, 10_000)
     metric["_area"] = metric.geometry.area / conversion
 
@@ -45,8 +45,9 @@ def compute_eunis_extent(eunis_gdf: gpd.GeoDataFrame, unit: str = "Ha") -> pd.Da
 
     total = agg["total_area"].sum()
     agg["pct_of_total"] = (agg["total_area"] / total * 100).round(1) if total > 0 else 0.0
-    agg["total_area"] = agg["total_area"].round(2)
+    # Compute area_m2 from unrounded total_area to avoid rounding-induced error
     agg["area_m2"] = (agg["total_area"] * AREA_CONVERSIONS.get(unit, 10_000)).round(0)
+    agg["total_area"] = agg["total_area"].round(2)
 
     return agg.sort_values("total_area", ascending=False).reset_index(drop=True)
 
@@ -150,26 +151,20 @@ def suggest_feature_classifications(eunis_gdf, feature_names):
     """
     from pa_config import EUNIS_HFS_BH_CODES, EUNIS_ESF_CODES
 
-    # Find subzones with biogenic/reef habitats
-    hfs_subzones = set()
-    esf_subzones = set()
-    for _, row in eunis_gdf.iterrows():
-        code = row.get("dominant_EUNIS", "")
-        if pd.isna(code):
-            continue
-        # Check if any HFS code is a prefix of or matches the dominant EUNIS
-        for hfs_code in EUNIS_HFS_BH_CODES:
-            if code.startswith(hfs_code) or hfs_code.startswith(code):
-                hfs_subzones.add(row["Subzone_ID"])
-                break
-        for esf_code in EUNIS_ESF_CODES:
-            if code.startswith(esf_code) or esf_code.startswith(code):
-                esf_subzones.add(row["Subzone_ID"])
-                break
+    # Vectorized: find subzones with biogenic/reef habitats.
+    # Only forward prefix match (code.startswith(hfs_code)) — a data code must
+    # equal or be more specific than a reference code, never the reverse.
+    eunis_col = eunis_gdf["dominant_EUNIS"].fillna("")
+    hfs_mask = eunis_col.apply(
+        lambda code: any(code.startswith(hc) for hc in EUNIS_HFS_BH_CODES) if code else False
+    )
+    esf_mask = eunis_col.apply(
+        lambda code: any(code.startswith(ec) for ec in EUNIS_ESF_CODES) if code else False
+    )
+    hfs_subzones = set(eunis_gdf.loc[hfs_mask, "Subzone_ID"])
+    esf_subzones = set(eunis_gdf.loc[esf_mask, "Subzone_ID"])
 
     suggestions = {}
-    # We can't know WHICH features are habitat-forming from EUNIS alone,
-    # but we can flag that HFS/BH-type habitats exist in the study area
     if hfs_subzones:
         suggestions["_hfs_subzone_count"] = len(hfs_subzones)
         suggestions["_hfs_subzone_ids"] = hfs_subzones
@@ -193,14 +188,14 @@ def build_missing_values(
     for sid in eunis_ids - eva_ids:
         rows.append({"Subzone_ID": sid, "issue_type": "no_eva", "notes": "No EVA score data"})
 
-    # Subzones with low EUNIS coverage
+    # Subzones with low EUNIS coverage (vectorized)
     if "coverage_pct" in eunis_gdf.columns:
-        low_cov = eunis_gdf[eunis_gdf["coverage_pct"] < 50]
-        for _, row in low_cov.iterrows():
+        low_cov = eunis_gdf[eunis_gdf["coverage_pct"] < 50][["Subzone_ID", "coverage_pct"]]
+        for sid, pct in zip(low_cov["Subzone_ID"], low_cov["coverage_pct"]):
             rows.append({
-                "Subzone_ID": row["Subzone_ID"],
+                "Subzone_ID": sid,
                 "issue_type": "low_coverage",
-                "notes": f"EUNIS coverage only {row['coverage_pct']:.0f}%",
+                "notes": f"EUNIS coverage only {pct:.0f}%",
             })
 
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Subzone_ID", "issue_type", "notes"])

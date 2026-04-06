@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _reproject_to_metric(gdf: gpd.GeoDataFrame, original_crs=None) -> gpd.GeoDataFrame:
+def reproject_to_metric(gdf: gpd.GeoDataFrame, original_crs=None) -> gpd.GeoDataFrame:
     """Reproject a WGS-84 GeoDataFrame to a metric CRS for area calculation.
 
     Strategy:
@@ -99,7 +99,9 @@ def compute_extent(
     subset["eunis_code"] = subset["Subzone ID"].map(habitat_assignments)
 
     # Reproject and compute area in m²
-    metric = _reproject_to_metric(subset, original_crs)
+    metric = reproject_to_metric(subset, original_crs)
+    if unit not in AREA_CONVERSIONS:
+        logger.warning("Unknown area unit %r; defaulting to 'Ha'.", unit)
     conversion = AREA_CONVERSIONS.get(unit, 10_000)
     metric["_area"] = metric.geometry.area / conversion
 

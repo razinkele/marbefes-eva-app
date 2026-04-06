@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def verify_benthos_max(gdf: gpd.GeoDataFrame) -> list[str]:
-    """Check that MaxBenthos == max(AQ6_benthos, AQ9_benthos, AQ13_benthos).
+    """Check that MaxBenthos == max(AQ6_benthos, AQ8_benthos, AQ9_benthos, AQ13_benthos).
 
     Returns a list of issue descriptions (empty if all OK).
     Tolerance: 0.01.
