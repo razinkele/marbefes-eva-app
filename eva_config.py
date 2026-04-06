@@ -264,7 +264,7 @@ EXPORT_CHART_TAB_COLOR = 'FD7E14'
 
 # H3 hexagonal grid resolution presets
 HEX_PRESETS = {
-    "small": {"label": "Small (~174m edge, ~0.1 km²)", "resolution": 9},
-    "medium": {"label": "Medium (~461m edge, ~0.7 km²)", "resolution": 8},
-    "large": {"label": "Large (~1.2km edge, ~5.2 km²)", "resolution": 7},
+    "small":  {"label": "Small (~174m edge, ~0.1 km²)",  "resolution": 9, "area_km2": 0.105},
+    "medium": {"label": "Medium (~461m edge, ~0.7 km²)", "resolution": 8, "area_km2": 0.737},
+    "large":  {"label": "Large (~1.2km edge, ~5.2 km²)", "resolution": 7, "area_km2": 5.161},
 }

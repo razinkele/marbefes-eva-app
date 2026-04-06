@@ -523,9 +523,8 @@ def server(input, output, session):
             parts.append(f"Boundary: {len(boundary)} polygon(s)")
         if grid is not None:
             preset_key = input.hex_preset()
-            area_per_cell = {9: 0.105, 8: 0.737, 7: 5.161}
-            res = HEX_PRESETS[preset_key]["resolution"]
-            total_area_km2 = len(grid) * area_per_cell.get(res, 0.737)
+            preset = HEX_PRESETS.get(preset_key, HEX_PRESETS["medium"])
+            total_area_km2 = len(grid) * preset["area_km2"]
             parts.append(f"Grid: {len(grid)} cells, ~{total_area_km2:.1f} km²")
         if not parts:
             return ui.p("Upload a boundary file or draw a polygon on the map to get started.",
