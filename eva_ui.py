@@ -483,7 +483,12 @@ app_ui = ui.page_navbar(
         ui.layout_sidebar(
             ui.sidebar(
                 ui.div(
-                    ui.h5("1. Define Study Area", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.h5("1. Define Study Area", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
+                    ui.p(
+                        "The study area is the marine polygon within which the hexagonal grid will be generated. "
+                        "Land areas are automatically removed from the grid.",
+                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                    ),
                     ui.input_radio_buttons(
                         "polygon_source",
                         "Polygon source:",
@@ -500,52 +505,93 @@ app_ui = ui.page_navbar(
                             button_label="Browse...",
                         ),
                         ui.p(
-                            "Supported: GeoJSON, Zipped Shapefile (.zip), GeoPackage (.gpkg)",
-                            style="font-size: 0.85rem; color: #6c757d; margin-top: 0.3rem;",
+                            "Supported: GeoJSON (.geojson/.json), Zipped Shapefile (.zip), GeoPackage (.gpkg). "
+                            "Files must be in WGS84 (EPSG:4326) or will be reprojected automatically.",
+                            style="font-size: 0.8rem; color: #6c757d; margin-top: 0.3rem;",
                         ),
                     ),
                     ui.panel_conditional(
                         "input.polygon_source === 'draw'",
                         ui.p(
-                            "Use the polygon tool on the map (right panel) to draw your study area boundary.",
-                            style="font-size: 0.85rem; color: #6c757d; margin-top: 0.5rem;",
+                            "Use the ◻ rectangle or ⬠ polygon draw tools on the map to outline your study area. "
+                            "You can edit or delete shapes after drawing. "
+                            "Only the last drawn shape is used.",
+                            style="font-size: 0.8rem; color: #6c757d; margin-top: 0.5rem;",
                         ),
                     ),
                 ),
                 ui.hr(),
                 ui.div(
-                    ui.h5("2. Grid Parameters", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_select(
-                        "hex_preset",
-                        "Hexagon size:",
-                        choices={k: v["label"] for k, v in HEX_PRESETS.items()},
-                        selected="mobile",
-                    ),
+                    ui.h5("2. Grid Parameters", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
                     ui.p(
-                        "📖 Guidance (Table 2.1): ~250 m for benthic ECs; ~3 km for mobile ECs (seabirds, fish, mammals, plankton).",
-                        style="font-size: 0.8rem; color: #6c757d; margin-top: 0.4rem;",
+                        "Select the hexagon size based on the Ecosystem Component (EC) you are assessing. "
+                        "Smaller cells capture fine-scale benthic patterns; larger cells suit mobile species.",
+                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                    ),
+                    ui.tooltip(
+                        ui.input_select(
+                            "hex_preset",
+                            "Hexagon size:",
+                            choices={k: v["label"] for k, v in HEX_PRESETS.items()},
+                            selected="mobile",
+                        ),
+                        "Inner diameter (flat-to-flat width) of each hexagon, "
+                        "measured as twice the apothem per EVA guidance FAQ.",
+                        placement="right",
+                    ),
+                    ui.div(
+                        ui.HTML(
+                            "<b>📖 EVA Guidance Table 2.1</b><br>"
+                            "<b>~250 m</b> → Benthic ECs: macrobenthos, epibenthos, benthic habitats (fine-scale)<br>"
+                            "<b>~3 km</b> → Mobile ECs: seabirds, fish, marine mammals, plankton<br>"
+                            "<i>Nest smaller grids inside larger ones when combining ECs.</i>"
+                        ),
+                        style=(
+                            "font-size: 0.78rem; color: #555; background: #f0f7ff; "
+                            "border-left: 3px solid #006994; border-radius: 4px; "
+                            "padding: 0.5rem 0.6rem; margin-top: 0.5rem;"
+                        ),
                     ),
                 ),
                 ui.hr(),
                 ui.div(
-                    ui.h5("3. Generate", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.input_action_button(
-                        "generate_grid",
-                        "Generate Grid",
-                        class_="btn-primary",
-                        style="width: 100%; margin-bottom: 0.5rem;",
+                    ui.h5("3. Generate", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
+                    ui.tooltip(
+                        ui.input_action_button(
+                            "generate_grid",
+                            "Generate Grid",
+                            class_="btn-primary",
+                            style="width: 100%; margin-bottom: 0.5rem;",
+                        ),
+                        "Creates a hexagonal H3 grid covering your study area. "
+                        "Land cells are automatically clipped using Natural Earth 10m coastlines.",
+                        placement="right",
                     ),
-                    ui.download_button(
-                        "download_grid",
-                        "Download GeoJSON",
-                        class_="btn-outline-secondary",
-                        style="width: 100%; margin-bottom: 0.5rem;",
+                    ui.tooltip(
+                        ui.download_button(
+                            "download_grid",
+                            "Download GeoJSON",
+                            class_="btn-outline-secondary",
+                            style="width: 100%; margin-bottom: 0.5rem;",
+                        ),
+                        "Download the generated grid as a GeoJSON file for use in GIS software (QGIS, ArcGIS, etc.).",
+                        placement="right",
                     ),
-                    ui.input_action_button(
-                        "use_grid",
-                        "Use This Grid →",
-                        class_="btn-success",
-                        style="width: 100%;",
+                    ui.tooltip(
+                        ui.input_action_button(
+                            "use_grid",
+                            "Use This Grid →",
+                            class_="btn-success",
+                            style="width: 100%;",
+                        ),
+                        "Load this grid into the EVA pipeline as your spatial assessment units (subzones). "
+                        "Proceed to the Data Input tab to upload EC data matched to the Subzone IDs.",
+                        placement="right",
+                    ),
+                    ui.p(
+                        "💡 After clicking 'Use This Grid', go to the Data Input tab and upload a CSV "
+                        "with a 'Subzone ID' column matching the grid cell IDs (HEX_001, HEX_002, …).",
+                        style="font-size: 0.78rem; color: #6c757d; margin-top: 0.6rem;",
                     ),
                 ),
                 width=380,
