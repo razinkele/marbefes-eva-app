@@ -212,15 +212,18 @@ class TestLandClipping:
         # All cells should survive — open sea
         assert len(result_clipped) == len(result_raw)
 
-    def test_land_polygon_removes_cells(self):
-        """A polygon over land should have fewer (or zero) cells after clipping."""
+    def test_land_polygon_clips_geometry(self):
+        """Clipping a coastal/land polygon reduces total grid area (geometry is trimmed)."""
         from eva_hexgrid import generate_h3_grid
-        gdf = _make_gdf(SMALL_POLYGON)
-        raw = generate_h3_grid(gdf, resolution=8, clip_to_sea=False)
-        # clip_to_sea=True: should either raise ValueError (all on land) or return fewer
+        gdf = _make_gdf(LARGE_POLYGON)  # Klaipeda area — mix of land and sea
+        raw = generate_h3_grid(gdf, resolution=7, clip_to_sea=False)
         try:
-            clipped = generate_h3_grid(gdf, resolution=8, clip_to_sea=True)
-            assert len(clipped) < len(raw)
+            clipped = generate_h3_grid(gdf, resolution=7, clip_to_sea=True)
+            # Either fewer cells or smaller total area (geometry clipped to sea)
+            raw_area = raw.geometry.area.sum()
+            clipped_area = clipped.geometry.area.sum()
+            assert clipped_area < raw_area or len(clipped) < len(raw), \
+                "Clipping should reduce total area or cell count for a coastal polygon"
         except ValueError as exc:
             assert "land" in str(exc).lower() or "marine" in str(exc).lower()
 

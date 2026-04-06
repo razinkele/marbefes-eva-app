@@ -57,37 +57,51 @@ def _load_land_mask() -> gpd.GeoDataFrame | None:
         return None
 
 
-def _remove_land_hexes(
+def _clip_grid_to_sea(
     grid_gdf: gpd.GeoDataFrame, land_gdf: gpd.GeoDataFrame
 ) -> gpd.GeoDataFrame:
-    """Remove hexagons whose centroid falls on land.
+    """Clip hex geometries to sea areas, removing land portions entirely.
 
-    Uses a spatial join on centroids against the land polygon layer.
-    Hexes fully at sea are retained; land-centred hexes are dropped.
-    Subzone IDs are renumbered sequentially after filtering.
+    Computes sea = grid_bbox − land_union, clips each hex to that sea polygon,
+    then drops slivers smaller than 5% of the median hex area.
+    Subzone IDs are renumbered sequentially after clipping.
     """
-    # Compute centroids in a projected CRS to avoid geopandas warning,
-    # then convert back to WGS84 for the spatial join against land polygons.
-    centroids_geom = grid_gdf.geometry.to_crs(epsg=3857).centroid.to_crs(epsg=4326)
-    centroids = grid_gdf.copy()
-    centroids.geometry = centroids_geom
+    from shapely.geometry import box
 
-    # Spatial join: find centroids that fall within any land polygon
-    land_hits = centroids.sjoin(
-        land_gdf[["geometry"]], how="inner", predicate="within"
-    ).index
+    # Restrict land polygons to those intersecting the grid area (speed)
+    minx, miny, maxx, maxy = grid_gdf.total_bounds
+    grid_bbox = box(minx - 0.1, miny - 0.1, maxx + 0.1, maxy + 0.1)
+    local_land = land_gdf[land_gdf.geometry.intersects(grid_bbox)]
 
-    filtered = grid_gdf.drop(index=land_hits).reset_index(drop=True)
+    if local_land.empty:
+        logger.info("No land polygons intersect the grid area — no clipping applied")
+        return grid_gdf
 
-    # Renumber Subzone IDs to keep them sequential
-    width = max(3, len(str(len(filtered))))
-    filtered["Subzone ID"] = [f"HEX_{i + 1:0{width}d}" for i in range(len(filtered))]
+    land_union = local_land.geometry.union_all()
+    sea_geom = grid_bbox.difference(land_union)
+    sea_gdf = gpd.GeoDataFrame(geometry=[sea_geom], crs="EPSG:4326")
 
-    removed = len(grid_gdf) - len(filtered)
+    # Clip all hexes against the sea polygon
+    clipped = gpd.clip(grid_gdf, sea_gdf)
+
+    # Drop tiny slivers (< 5% of median original hex area) — use projected CRS for area
+    grid_proj = grid_gdf.to_crs(epsg=3857)
+    clipped_proj = clipped.to_crs(epsg=3857)
+    median_hex_area = grid_proj.geometry.area.median()
+    clipped = clipped[clipped_proj.geometry.area > 0.05 * median_hex_area].reset_index(drop=True)
+
+    removed = len(grid_gdf) - len(clipped)
     if removed:
-        logger.info("Land mask: removed %d land hexagons (%d remaining)", removed, len(filtered))
+        logger.info(
+            "Land mask: clipped grid to sea — %d cells removed, %d remaining",
+            removed, len(clipped),
+        )
 
-    return filtered
+    # Renumber Subzone IDs sequentially
+    width = max(3, len(str(len(clipped))))
+    clipped["Subzone ID"] = [f"HEX_{i + 1:0{width}d}" for i in range(len(clipped))]
+
+    return clipped
 
 
 def generate_h3_grid(
@@ -158,11 +172,11 @@ def generate_h3_grid(
         f"Generated {len(result)} H3 cells at resolution {resolution}"
     )
 
-    # Clip to sea: remove hexes whose centroid falls on land
+    # Clip to sea: remove land portions from each hex geometry
     if clip_to_sea:
         land = _load_land_mask()
         if land is not None:
-            result = _remove_land_hexes(result, land)
+            result = _clip_grid_to_sea(result, land)
             if not len(result):
                 raise ValueError(
                     "All generated hexagons fall on land. "
