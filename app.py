@@ -567,13 +567,28 @@ def server(input, output, session):
                     on=id_col,
                     how="left",
                 )
-                is_numeric = selected_layer == "depth_m"
+                is_numeric = pd.api.types.is_numeric_dtype(grid_with_cov[selected_layer])
+                # Per-variable colormaps: temperature uses RdYlBu_r, depth Blues, etc.
+                _LAYER_COLORMAPS = {
+                    "depth_m":          "Blues_09",
+                    "sst_mean_c":       "RdYlBu_11",
+                    "bottom_temp_c":    "RdYlBu_11",
+                    "sss_mean":         "YlOrBr_09",
+                    "mld_mean_m":       "PuBu_09",
+                    "current_speed_ms": "PuBu_09",
+                    "chl_mean":         "YlGn_09",
+                    "o2_mean_mmol":     "RdBu_11",
+                    "no3_mean_mmol":    "YlOrRd_09",
+                    "ph_mean":          "PiYG_11",
+                    "npp_mean":         "YlGn_09",
+                }
                 if is_numeric:
                     vals = grid_with_cov[selected_layer].dropna()
                     vmin = float(vals.min()) if len(vals) else 0.0
                     vmax = float(vals.max()) if len(vals) else 1.0
                     import branca.colormap as cm
-                    colormap = cm.linear.Blues_09.scale(vmin, vmax)
+                    cmap_name = _LAYER_COLORMAPS.get(selected_layer, "Blues_09")
+                    colormap = getattr(cm.linear, cmap_name).scale(vmin, vmax)
                     colormap.caption = _SDM_MAP_COLS.get(selected_layer, selected_layer)
                     colormap.add_to(m)
                     color_dict = {}
