@@ -173,6 +173,13 @@ def fetch_cmems_covariates(
     bgc_start_year / bgc_end_year:
         Year range for BGC monthly averaging (default 2016–2020).
     """
+    # Validate inputs before attempting any import (allows tests without the lib)
+    if not layers:
+        raise ValueError("No CMEMS layers specified.")
+
+    # Resolve credentials (raises ValueError if missing)
+    username, password = _resolve_credentials(username, password)
+
     try:
         import copernicusmarine  # noqa: F401
         import xarray as xr
@@ -181,12 +188,6 @@ def fetch_cmems_covariates(
             "copernicusmarine and xarray are required. "
             "Install: pip install copernicusmarine xarray"
         ) from exc
-
-    if not layers:
-        raise ValueError("No CMEMS layers specified.")
-
-    # Resolve credentials
-    username, password = _resolve_credentials(username, password)
 
     # Bounding box with buffer (1° margin)
     gdf_wgs = grid_gdf.to_crs(4326) if grid_gdf.crs and grid_gdf.crs.to_epsg() != 4326 else grid_gdf
