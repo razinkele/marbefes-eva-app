@@ -344,26 +344,100 @@ custom_css = """
     .app-header {
         background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%);
         color: white;
-        padding: 0.6rem 1.2rem;
+        padding: 0.3rem 1rem;
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 10px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.15);
         flex-shrink: 0;
         z-index: 100;
     }
 
-    .app-header .app-logo img { height: 36px; }
+    .app-header .app-logo img { height: 28px; }
+    .app-header .app-title-group {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        flex: 1;
+    }
     .app-header .app-title {
-        font-size: 1.3rem;
+        font-size: 1.1rem;
         font-weight: 700;
         color: white;
         margin: 0;
+        line-height: 1;
     }
     .app-header .app-subtitle {
-        font-size: 0.78rem;
+        font-size: 0.75rem;
         opacity: 0.85;
         margin: 0;
+        font-weight: 400;
+        line-height: 1;
+    }
+    .app-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: auto;
+    }
+    .app-header-actions .header-btn {
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.25);
+        color: white;
+        border-radius: 5px;
+        padding: 3px 9px;
+        font-size: 0.78rem;
+        cursor: pointer;
+        transition: background 0.2s;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        text-decoration: none;
+    }
+    .app-header-actions .header-btn:hover {
+        background: rgba(255,255,255,0.28);
+        color: white;
+    }
+    /* Help / About / Options modal panels */
+    .header-panel-backdrop {
+        display: none;
+        position: fixed; inset: 0;
+        background: rgba(0,0,0,0.35);
+        z-index: 1200;
+    }
+    .header-panel-backdrop.open { display: block; }
+    .header-panel {
+        position: fixed;
+        top: 0; right: 0;
+        width: 380px; height: 100%;
+        background: #fff;
+        box-shadow: -4px 0 20px rgba(0,0,0,0.2);
+        z-index: 1201;
+        display: flex; flex-direction: column;
+        transform: translateX(110%);
+        transition: transform 0.25s ease;
+    }
+    .header-panel.open { transform: translateX(0); }
+    .header-panel-title {
+        background: linear-gradient(135deg, #004d7a, #006994);
+        color: white;
+        padding: 12px 16px;
+        font-weight: 600;
+        font-size: 1rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .header-panel-close {
+        background: none; border: none; color: white;
+        font-size: 1.3rem; cursor: pointer; line-height: 1;
+    }
+    .header-panel-body {
+        padding: 16px;
+        overflow-y: auto;
+        flex: 1;
+        font-size: 0.87rem;
+        line-height: 1.6;
     }
 
     .app-body {
@@ -680,15 +754,116 @@ app_ui = ui.page_fluid(
         # ── App header ──────────────────────────────────────────
         ui.div(
             ui.div(
-                ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 36px; margin-right: 8px;">'),
+                ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 28px; margin-right: 6px;">'),
                 class_="app-logo"
             ),
             ui.div(
-                ui.p(f"MARBEFES EVA v{APP_VERSION_STR}", class_="app-title"),
-                ui.p("Ecological Value Assessment", class_="app-subtitle"),
+                ui.tags.span("MARBEFES EVA", class_="app-title"),
+                ui.tags.span(" — Ecological Value Assessment", class_="app-subtitle"),
+                class_="app-title-group"
+            ),
+            # Right-side action buttons
+            ui.div(
+                ui.HTML('''
+                <button class="header-btn" onclick="openPanel('help-panel')">
+                  <i class="bi bi-question-circle"></i> Help
+                </button>
+                <button class="header-btn" onclick="openPanel('about-panel')">
+                  <i class="bi bi-info-circle"></i> About
+                </button>
+                <button class="header-btn" onclick="openPanel('options-panel')">
+                  <i class="bi bi-gear"></i> Options
+                </button>
+                '''),
+                class_="app-header-actions"
             ),
             class_="app-header"
         ),
+        # ── Help / About / Options slide-in panels ───────────────
+        ui.HTML('''
+        <div class="header-panel-backdrop" id="panel-backdrop" onclick="closeAllPanels()"></div>
+
+        <div class="header-panel" id="help-panel">
+          <div class="header-panel-title">
+            <span><i class="bi bi-question-circle"></i> Help</span>
+            <button class="header-panel-close" onclick="closeAllPanels()">&times;</button>
+          </div>
+          <div class="header-panel-body">
+            <h5>Getting Started</h5>
+            <ol>
+              <li><strong>Data Input</strong> — upload a CSV with species occurrence records.</li>
+              <li><strong>Grid Setup</strong> — draw or upload a boundary polygon, choose a hex grid resolution, and generate the grid.</li>
+              <li><strong>Environmental Covariates</strong> — fetch depth, EUNIS habitat, and substrate data for each cell.</li>
+              <li><strong>Copernicus Marine</strong> — fetch SST, salinity, chlorophyll and other physical/biogeochemical variables.</li>
+              <li><strong>EVA Calculations</strong> — compute Ecological Value scores per grid cell.</li>
+              <li><strong>Physical Accounts</strong> — generate habitat physical accounts and SEEA tables.</li>
+              <li><strong>Results &amp; Export</strong> — view maps, charts, and download results as Excel or CSV.</li>
+            </ol>
+            <h5>Tips</h5>
+            <ul>
+              <li>Use the <em>Grid Setup</em> map to visually verify your study area before fetching data.</li>
+              <li>EUNIS and CMEMS data fetching can take several minutes for large areas.</li>
+              <li>All downloaded results include metadata columns for reproducibility.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="header-panel" id="about-panel">
+          <div class="header-panel-title">
+            <span><i class="bi bi-info-circle"></i> About</span>
+            <button class="header-panel-close" onclick="closeAllPanels()">&times;</button>
+          </div>
+          <div class="header-panel-body">
+            <p><strong>MARBEFES EVA</strong> is an open-source tool for Ecological Value Assessment of marine areas, developed within the <strong>MARBEFES</strong> Horizon Europe project (Grant No. 101059877).</p>
+            <p>It combines species occurrence data with environmental covariates (bathymetry, EUNIS habitat classification, Copernicus Marine physical and biogeochemical variables) on a hexagonal grid to produce spatially explicit ecological value scores and habitat physical accounts.</p>
+            <hr>
+            <p><strong>Developed by:</strong><br>Institute of Ecoscience &amp; Earth Sciences (IECS), Klaipėda University</p>
+            <p><strong>Contact:</strong><br>arturas.razinkovas-baziukas@ku.lt</p>
+            <p><strong>Source code:</strong><br><a href="https://github.com/razinkele/EVA-Algorithms" target="_blank">github.com/razinkele/EVA-Algorithms</a></p>
+            <hr>
+            <p style="font-size:0.8rem; color:#666;">MARBEFES is funded by the European Union under Horizon Europe. Views and opinions expressed are those of the authors only and do not necessarily reflect those of the European Union.</p>
+          </div>
+        </div>
+
+        <div class="header-panel" id="options-panel">
+          <div class="header-panel-title">
+            <span><i class="bi bi-gear"></i> Options</span>
+            <button class="header-panel-close" onclick="closeAllPanels()">&times;</button>
+          </div>
+          <div class="header-panel-body">
+            <h5>Display</h5>
+            <div style="margin-bottom:12px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="opt-dark-mode" onchange="toggleDarkMode(this.checked)">
+                Dark sidebar
+              </label>
+            </div>
+            <h5>Data Sources</h5>
+            <p style="color:#555;">EMODnet WMS endpoint:<br>
+              <code style="font-size:0.75rem;">emodnet-seabedhabitats.eu</code>
+            </p>
+            <p style="color:#555;">Copernicus Marine Service:<br>
+              <code style="font-size:0.75rem;">marine.copernicus.eu</code>
+            </p>
+            <h5>Cache</h5>
+            <p style="color:#555; font-size:0.82rem;">WMS tile responses are cached in memory for the current session. Restart the app to clear the cache.</p>
+          </div>
+        </div>
+
+        <script>
+        function openPanel(id) {
+          document.getElementById("panel-backdrop").classList.add("open");
+          document.getElementById(id).classList.add("open");
+        }
+        function closeAllPanels() {
+          document.getElementById("panel-backdrop").classList.remove("open");
+          document.querySelectorAll(".header-panel").forEach(function(p){ p.classList.remove("open"); });
+        }
+        function toggleDarkMode(on) {
+          document.getElementById("custom-sidebar").style.filter = on ? "brightness(0.75)" : "";
+        }
+        </script>
+        '''),
         # ── Body: sidebar + main ────────────────────────────────
         ui.div(
             # Left sidebar navigation
