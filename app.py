@@ -2420,21 +2420,31 @@ def server(input, output, session):
             n_types = int(overlay["dominant_EUNIS"].nunique())
             logger.info("EUNIS overlay set: %d types, %d/%d hexagons", n_types, n_eunis, len(overlay))
 
-        # Summary notification
+        # Summary notification — warn about zero-coverage layers
         parts = []
+        zero_coverage = []
         for key in selected:
             if key == "depth" and "depth_m" in covariates.columns:
                 n = int(covariates["depth_m"].notna().sum())
-                parts.append(f"depth: {n} hexagons")
+                parts.append(f"depth: {n}")
             elif key in eva_eunis_wms.EUSM_LAYERS:
                 col = eva_eunis_wms.EUSM_LAYERS[key]["col"]
                 if col in covariates.columns:
                     n = int(covariates[col].notna().sum())
-                    parts.append(f"{eva_eunis_wms.EUSM_LAYERS[key]['label']}: {n}")
-        ui.notification_show(
-            "✅ " + " · ".join(parts) if parts else "✅ Fetch complete.",
-            type="message", duration=8,
-        )
+                    lbl = eva_eunis_wms.EUSM_LAYERS[key]["label"]
+                    if n == 0:
+                        note = eva_eunis_wms.EUSM_LAYERS[key].get("coverage", "")
+                        zero_coverage.append(f"{lbl} ({note})")
+                    else:
+                        parts.append(f"{lbl}: {n}")
+        msg = "✅ " + " · ".join(parts) if parts else "✅ Fetch complete."
+        ui.notification_show(msg, type="message", duration=8)
+        for lbl in zero_coverage:
+            ui.notification_show(
+                f"⚠️ No data returned for: {lbl}. "
+                "This layer may not cover your study area.",
+                type="warning", duration=10,
+            )
 
     @reactive.Effect
     @reactive.event(input.upload_habitat_source)

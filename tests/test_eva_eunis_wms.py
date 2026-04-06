@@ -302,5 +302,94 @@ class TestFetchDepthSignConvention(unittest.TestCase):
             self.assertIsNone(result.iloc[0]["depth_m"])
 
 
+class TestLayerConfig(unittest.TestCase):
+    """Verify EUSM_LAYERS uses correct _400 variants (not _full for zoom-restricted layers)."""
+
+    def test_eunis_uses_400_variant(self):
+        wms = eva_eunis_wms.EUSM_LAYERS["eunis2007"]["wms_layer"]
+        self.assertIn("_400", wms, f"Expected _400 variant, got {wms}")
+        self.assertNotIn("_full", wms)
+
+    def test_energy_uses_400_variant(self):
+        wms = eva_eunis_wms.EUSM_LAYERS["energy"]["wms_layer"]
+        self.assertIn("_400", wms)
+
+    def test_biozone_uses_400_variant(self):
+        wms = eva_eunis_wms.EUSM_LAYERS["biozone"]["wms_layer"]
+        self.assertIn("_400", wms)
+
+    def test_substrate_keeps_full(self):
+        # subs_full has clean fills (3-5 unique colors), no AA issue
+        wms = eva_eunis_wms.EUSM_LAYERS["substrate"]["wms_layer"]
+        self.assertIn("subs_full", wms)
+
+    def test_all_layers_have_coverage_note(self):
+        for key, cfg in eva_eunis_wms.EUSM_LAYERS.items():
+            self.assertIn("coverage", cfg, f"Layer '{key}' missing 'coverage' key")
+
+
+class TestSampleTileNeighborhood(unittest.TestCase):
+    """Test that _sample_tile uses 5×5 neighbourhood and handles boundary clamping."""
+
+    def _make_arr(self, center_color, size=32):
+        """Solid-colour RGBA array with one slightly different edge pixel."""
+        arr = np.full((size, size, 4), [*center_color, 255], dtype=np.uint8)
+        # Place an anti-aliased edge colour at the very edge
+        arr[0, 0] = [128, 64, 32, 255]
+        return arr
+
+    def test_returns_dominant_color_in_patch(self):
+        arr = self._make_arr((200, 100, 50))
+        # Sample from centre — should return the dominant solid colour
+        result = eva_eunis_wms._sample_tile(arr, 21.0, 55.0, 20.0, 54.0, 22.0, 56.0)
+        self.assertEqual(result[:3], (200, 100, 50))
+
+    def test_boundary_clamping_no_indexerror(self):
+        arr = np.full((1024, 1024, 4), [0xBF, 0x50, 0x00, 255], dtype=np.uint8)
+        # lat == tlat0 would give row_px=1024 without clamping → IndexError
+        result = eva_eunis_wms._sample_tile(arr, 20.0, 54.0, 20.0, 54.0, 22.0, 56.0)
+        self.assertIsInstance(result, tuple)
+        self.assertEqual(len(result), 4)
+
+    def test_all_transparent_returns_transparent(self):
+        arr = np.zeros((32, 32, 4), dtype=np.uint8)
+        result = eva_eunis_wms._sample_tile(arr, 21.0, 55.0, 20.0, 54.0, 22.0, 56.0)
+        self.assertEqual(result[3], 0)
+
+
+class TestNearestLegendColor(unittest.TestCase):
+    """Test nearest-colour fallback for anti-aliased WMS pixels."""
+
+    def test_exact_match_returns_immediately(self):
+        legend = {(200, 100, 50): ("A5.27", "Deep sand")}
+        code, name = eva_eunis_wms._nearest_legend_color((200, 100, 50), legend)
+        self.assertEqual(code, "A5.27")
+
+    def test_nearby_color_matched_within_threshold(self):
+        legend = {(200, 100, 50): ("A5.27", "Deep sand")}
+        # Slightly off due to AA: (205, 98, 55) — distance ~7.5
+        code, name = eva_eunis_wms._nearest_legend_color((205, 98, 55), legend, max_dist=40)
+        self.assertEqual(code, "A5.27")
+
+    def test_far_color_returns_none(self):
+        legend = {(200, 100, 50): ("A5.27", "Deep sand")}
+        # Very different colour — distance ~350
+        code, name = eva_eunis_wms._nearest_legend_color((10, 10, 10), legend, max_dist=40)
+        self.assertIsNone(code)
+
+    def test_empty_legend_returns_none(self):
+        code, name = eva_eunis_wms._nearest_legend_color((100, 100, 100), {})
+        self.assertIsNone(code)
+
+    def test_picks_closest_of_multiple_entries(self):
+        legend = {
+            (200, 100, 50): ("A5.27", "Sand"),
+            (10, 200, 30):  ("A4.1", "Bedrock"),
+        }
+        # Closer to first entry
+        code, _ = eva_eunis_wms._nearest_legend_color((198, 102, 48), legend, max_dist=40)
+        self.assertEqual(code, "A5.27")
+
+
 if __name__ == "__main__":
     unittest.main()

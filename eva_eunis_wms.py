@@ -29,37 +29,52 @@ logger = logging.getLogger(__name__)
 # ── EMODnet Seabed Habitats WMS ───────────────────────────────────────────────
 EUSM_WMS_URL = "https://ows.emodnet-seabedhabitats.eu/geoserver/emodnet_view/wms"
 
-# Available EuSEAMAP 2025 layers with column naming and labels
+# Available EuSEAMAP 2025 layers with column naming and labels.
+#
+# Layer naming convention: _full = full detail (renders only at high zoom ~1:500k).
+# _400 = 400m simplified (renders down to ~1:3M). Our 2°×2° tiles at 1024px are
+# ~1:440k–1:3M depending on latitude, so _400 variants are required.
+# Exception: eusm2025_subs_full uses simple polygon fill (few colours, no AA issue).
+#
+# Coverage notes (verified via WMS tile inspection):
+#   eunis2007, substrate, biozone, msfd: pan-European incl. Mediterranean
+#   energy (ene): Atlantic/North Sea/Baltic only — no Mediterranean data
+#   helcom: Baltic Sea only
 EUSM_LAYERS: dict = {
     "eunis2007": {
-        "wms_layer": "eusm2025_eunis2007_full",
+        "wms_layer": "eusm2025_eunis2007_400",
         "col": "dominant_EUNIS",
         "name_col": "dominant_EUNIS_name",
         "label": "EUNIS 2007 L3 Habitat",
+        "coverage": "pan-European",
     },
     "substrate": {
         "wms_layer": "eusm2025_subs_full",
         "col": "substrate_type",
         "name_col": "substrate_type_name",
         "label": "Seabed Substrate Type",
+        "coverage": "pan-European",
     },
     "energy": {
-        "wms_layer": "eusm2025_ene_full",
+        "wms_layer": "eusm2025_ene_400",
         "col": "energy_class",
         "name_col": "energy_class_name",
         "label": "Energy Class (wave/current exposure)",
+        "coverage": "Atlantic/North Sea/Baltic — no Mediterranean data",
     },
     "biozone": {
-        "wms_layer": "eusm2025_bio_full",
+        "wms_layer": "eusm2025_bio_400",
         "col": "bio_zone",
         "name_col": "bio_zone_name",
         "label": "Biological Zone",
+        "coverage": "pan-European (partial Mediterranean)",
     },
     "helcom": {
         "wms_layer": "eusm2025_helcom_full",
         "col": "helcom_class",
         "name_col": "helcom_class_name",
         "label": "HELCOM HUB Class (Baltic)",
+        "coverage": "Baltic Sea only",
     },
 }
 
@@ -171,13 +186,49 @@ def _sample_tile(
     tile_lon0: float, tile_lat0: float,
     tile_lon1: float, tile_lat1: float,
 ) -> tuple:
-    """Return (r, g, b, alpha) for a geographic point within a loaded tile array."""
+    """Return (r, g, b, alpha) for a geographic point within a loaded tile array.
+
+    Samples a 5×5 pixel neighbourhood and returns the most frequent opaque colour
+    to handle WMS PNG anti-aliasing artefacts at polygon edges.
+    """
     H, W = arr.shape[:2]
     col_px = int((lon - tile_lon0) / (tile_lon1 - tile_lon0) * W)
     row_px = int((tile_lat1 - lat) / (tile_lat1 - tile_lat0) * H)
+    # Clamp to valid range (handles centroids exactly on tile boundary)
+    col_px = min(col_px, W - 1)
+    row_px = min(row_px, H - 1)
     if not (0 <= row_px < H and 0 <= col_px < W):
         return (0, 0, 0, 0)
-    return tuple(int(v) for v in arr[row_px, col_px])
+    # Sample 5×5 neighbourhood
+    r0, r1 = max(0, row_px - 2), min(H, row_px + 3)
+    c0, c1 = max(0, col_px - 2), min(W, col_px + 3)
+    patch = arr[r0:r1, c0:c1]
+    opaque = patch[patch[:, :, 3] > 128]
+    if len(opaque) == 0:
+        return (0, 0, 0, 0)
+    # Return the most common opaque colour
+    pixels = [tuple(int(v) for v in px) for px in opaque]
+    from collections import Counter
+    most_common = Counter(pixels).most_common(1)[0][0]
+    return most_common
+
+
+def _nearest_legend_color(rgb: tuple, legend: dict, max_dist: int = 40) -> tuple:
+    """Return (code, name) for the legend entry closest to *rgb* in Euclidean RGB space.
+
+    Returns (None, None) if the closest match exceeds *max_dist*.
+    Anti-aliasing near polygon edges produces blended colours; this allows
+    a tolerance match to the nearest legend entry.
+    """
+    if not legend:
+        return (None, None)
+    r, g, b = rgb[:3]
+    best_dist, best_val = float("inf"), (None, None)
+    for (lr, lg, lb), val in legend.items():
+        dist = ((r - lr) ** 2 + (g - lg) ** 2 + (b - lb) ** 2) ** 0.5
+        if dist < best_dist:
+            best_dist, best_val = dist, val
+    return best_val if best_dist <= max_dist else (None, None)
 
 
 def _tile_key(lon: float, lat: float) -> tuple:
@@ -235,12 +286,26 @@ def _sample_eusm_layer(
         if a < 128:
             continue
 
+        # Exact match first; fall back to nearest-colour to handle AA artefacts
         code, name = legend.get((r, g, b), (None, None))
+        if code is None:
+            code, name = _nearest_legend_color((r, g, b), legend, max_dist=40)
         if code is not None:
             result[sid] = {"code": code, "name": name}
 
     n_with = len(result)
-    logger.info("%s: %d/%d hexagons annotated", layer_key, n_with, len(gdf))
+    coverage_note = config.get("coverage", "")
+    logger.info(
+        "%s (%s): %d/%d hexagons annotated%s",
+        layer_key, config["wms_layer"], n_with, len(gdf),
+        f" [coverage: {coverage_note}]" if coverage_note else "",
+    )
+    if n_with == 0 and len(gdf) > 0:
+        logger.warning(
+            "%s returned no data. Coverage note: %s. "
+            "The WMS layer may not cover this geographic region.",
+            layer_key, coverage_note or "unknown",
+        )
     return result
 
 
