@@ -330,6 +330,163 @@ custom_css = """
         font-weight: 700;
         border: 2px solid #4caf50;
     }
+
+    /* ── Left-sidebar navigation layout ────────────────────── */
+    html, body { height: 100%; margin: 0; }
+
+    .app-wrapper {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    .app-header {
+        background: linear-gradient(135deg, var(--ocean-blue) 0%, var(--accent-teal) 100%);
+        color: white;
+        padding: 0.6rem 1.2rem;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        flex-shrink: 0;
+        z-index: 100;
+    }
+
+    .app-header .app-logo img { height: 36px; }
+    .app-header .app-title {
+        font-size: 1.3rem;
+        font-weight: 700;
+        color: white;
+        margin: 0;
+    }
+    .app-header .app-subtitle {
+        font-size: 0.78rem;
+        opacity: 0.85;
+        margin: 0;
+    }
+
+    .app-body {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+    }
+
+    /* Sidebar */
+    .custom-sidebar {
+        width: 220px;
+        min-width: 220px;
+        background: linear-gradient(180deg, #004d7a 0%, #006994 60%, #008b9e 100%);
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        transition: width 0.25s ease, min-width 0.25s ease;
+        flex-shrink: 0;
+        z-index: 90;
+    }
+
+    .custom-sidebar.collapsed {
+        width: 52px;
+        min-width: 52px;
+    }
+
+    .sidebar-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.8rem 0.8rem 0.6rem;
+        border-bottom: 1px solid rgba(255,255,255,0.15);
+    }
+
+    .sidebar-title {
+        color: white;
+        font-weight: 700;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        opacity: 0.9;
+        white-space: nowrap;
+        overflow: hidden;
+        transition: opacity 0.2s;
+    }
+
+    .custom-sidebar.collapsed .sidebar-title { opacity: 0; width: 0; }
+
+    .sidebar-toggle {
+        background: transparent;
+        border: 1px solid rgba(255,255,255,0.3);
+        color: white;
+        border-radius: 5px;
+        padding: 2px 6px;
+        cursor: pointer;
+        flex-shrink: 0;
+        font-size: 1rem;
+        line-height: 1.4;
+    }
+    .sidebar-toggle:hover { background: rgba(255,255,255,0.15); }
+
+    .sidebar-nav {
+        padding: 0.4rem 0;
+        flex: 1;
+    }
+
+    .custom-sidebar .nav-link {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0.55rem 0.85rem;
+        color: rgba(255,255,255,0.82) !important;
+        font-size: 0.88rem;
+        font-weight: 500;
+        border-radius: 0;
+        text-decoration: none;
+        white-space: nowrap;
+        overflow: hidden;
+        transition: background 0.18s, color 0.18s;
+    }
+
+    .custom-sidebar .nav-link i {
+        font-size: 1.1rem;
+        flex-shrink: 0;
+        width: 22px;
+        text-align: center;
+    }
+
+    .custom-sidebar .nav-link span {
+        transition: opacity 0.2s;
+    }
+
+    .custom-sidebar.collapsed .nav-link span { opacity: 0; width: 0; overflow: hidden; }
+
+    .custom-sidebar .nav-link:hover {
+        background: rgba(255,255,255,0.12);
+        color: white !important;
+    }
+
+    .custom-sidebar .nav-link.active {
+        background: rgba(255,255,255,0.22) !important;
+        color: white !important;
+        font-weight: 600;
+        border-left: 3px solid rgba(255,255,255,0.8);
+    }
+
+    .sidebar-footer {
+        padding: 0.6rem 0.85rem;
+        border-top: 1px solid rgba(255,255,255,0.15);
+        font-size: 0.72rem;
+        color: rgba(255,255,255,0.5);
+        white-space: nowrap;
+        overflow: hidden;
+    }
+    .custom-sidebar.collapsed .sidebar-footer { display: none; }
+
+    /* Main content pane */
+    .main-content-area {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0;
+        background: #f4f6f9;
+    }
 </style>
 """
 
@@ -477,9 +634,328 @@ def get_aq_guide_html():
 
 
 # App UI
-app_ui = ui.page_navbar(
-    ui.nav_panel(
-        "🔷 Grid Setup",
+_sidebar_js = """
+function initSidebar() {
+    const toggleBtn = document.getElementById('sidebar-collapse-btn');
+    const sidebar = document.getElementById('custom-sidebar');
+    const navLinks = document.querySelectorAll('#custom-sidebar .nav-link[data-nav-id]');
+
+    if (toggleBtn && sidebar) {
+        toggleBtn.onclick = function(e) {
+            e.stopPropagation();
+            sidebar.classList.toggle('collapsed');
+        };
+    }
+
+    navLinks.forEach(function(link) {
+        link.onclick = function(e) {
+            e.preventDefault();
+            navLinks.forEach(function(l) { l.classList.remove('active'); });
+            link.classList.add('active');
+            var navId = link.getAttribute('data-nav-id');
+            Shiny.setInputValue('navigation', navId, {priority: 'event'});
+        };
+    });
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initSidebar);
+} else { initSidebar(); }
+setTimeout(initSidebar, 500);
+setTimeout(initSidebar, 1500);
+"""
+
+app_ui = ui.page_fluid(
+    ui.tags.head(
+        ui.HTML(custom_css),
+        ui.HTML('<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">'),
+    ),
+    ui.tags.script(_sidebar_js),
+    # Hidden navigation state input
+    ui.div(
+        ui.input_text("navigation", None, value="nav_home"),
+        style="display:none;"
+    ),
+    # Full-page wrapper
+    ui.div(
+        # ── App header ──────────────────────────────────────────
+        ui.div(
+            ui.div(
+                ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 36px; margin-right: 8px;">'),
+                class_="app-logo"
+            ),
+            ui.div(
+                ui.p(f"MARBEFES EVA v{APP_VERSION_STR}", class_="app-title"),
+                ui.p("Ecological Value Assessment", class_="app-subtitle"),
+            ),
+            class_="app-header"
+        ),
+        # ── Body: sidebar + main ────────────────────────────────
+        ui.div(
+            # Left sidebar navigation
+            ui.div(
+                {"id": "custom-sidebar"},
+                ui.div(
+                    ui.tags.span("Navigation", class_="sidebar-title"),
+                    ui.tags.button(
+                        ui.tags.i(class_="bi bi-list"),
+                        id="sidebar-collapse-btn",
+                        class_="sidebar-toggle",
+                        type="button",
+                    ),
+                    class_="sidebar-header"
+                ),
+                ui.div(
+                    ui.tags.a(
+                        {"class": "nav-link active",
+                         "href": "#",
+                         "data-nav-id": "nav_home"},
+                        ui.tags.i(class_="bi bi-house-fill"),
+                        ui.tags.span("Home")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_grid"},
+                        ui.tags.i(class_="bi bi-grid-3x3"),
+                        ui.tags.span("Grid Setup")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_data"},
+                        ui.tags.i(class_="bi bi-folder-open"),
+                        ui.tags.span("Data Input")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_features"},
+                        ui.tags.i(class_="bi bi-sliders"),
+                        ui.tags.span("EC Features")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_results"},
+                        ui.tags.i(class_="bi bi-bar-chart-fill"),
+                        ui.tags.span("AQ + EV Results")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_ev"},
+                        ui.tags.i(class_="bi bi-trophy-fill"),
+                        ui.tags.span("Total EV")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_viz"},
+                        ui.tags.i(class_="bi bi-graph-up"),
+                        ui.tags.span("Visualization")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_map"},
+                        ui.tags.i(class_="bi bi-map-fill"),
+                        ui.tags.span("Map")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_pa"},
+                        ui.tags.i(class_="bi bi-receipt"),
+                        ui.tags.span("Physical Accounts")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
+                         "data-nav-id": "nav_help"},
+                        ui.tags.i(class_="bi bi-question-circle-fill"),
+                        ui.tags.span("Help & Method")
+                    ),
+                    class_="sidebar-nav"
+                ),
+                ui.div(f"v{APP_VERSION_STR}", class_="sidebar-footer"),
+                class_="custom-sidebar"
+            ),
+            # Main content area with conditional panels
+            ui.div(
+                ui.panel_conditional(
+                    "input.navigation === 'nav_home'",
+        ui.layout_sidebar(
+            ui.sidebar(
+                ui.div(
+                    ui.div(
+                        ui.div(
+                            ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 50px; margin-right: 10px;">'),
+                            ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 50px;">'),
+                            style="display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; padding: 10px; background: white; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
+                        ),
+                        ui.h4("MARBEFES EVA", style="text-align: center; color: #006994; font-weight: 700;"),
+                        ui.p("Phase 2 Assessment Tool", style="text-align: center; color: #6c757d; font-size: 0.9rem;"),
+                        style="margin-bottom: 1.5rem;"
+                    ),
+                ),
+                ui.hr(),
+                ui.div(
+                    ui.h5("✨ Features", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
+                    ui.tags.ul(
+                        ui.tags.li("📊 Calculate assessment questions (AQ)"),
+                        ui.tags.li("🌍 Compute ecological value (EV)"),
+                        ui.tags.li("📈 Aggregate total EV scores"),
+                        style="line-height: 2; color: #495057;"
+                    ),
+                    class_="info-box"
+                ),
+                ui.hr(),
+                ui.div(
+                    ui.h5("📋 Quick Start", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
+                    ui.p(
+                        "1. Upload your data",
+                        ui.br(),
+                        "2. Configure features",
+                        ui.br(),
+                        "3. View results",
+                        style="line-height: 2; color: #495057;"
+                    )
+                ),
+                width=320
+            ),
+            ui.div(
+                # Welcome Banner
+                ui.div(
+                    ui.div(
+                        ui.h1(
+                            ui.div(
+                                ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 60px; margin-right: 15px;">'),
+                                ui.span("MARBEFES", style="font-weight: 800;"),
+                                ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 60px; margin-left: 15px;">'),
+                                style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; justify-content: center;"
+                            ),
+                            style="margin: 0;"
+                        ),
+                        ui.h2("Ecological Value Assessment - Phase 2", style="font-weight: 300; font-size: 1.8rem; margin: 0.5rem 0;"),
+                        ui.p(
+                            "🇪🇺 Funded by the European Union's Horizon Europe Research Programme",
+                            style="font-size: 1rem; margin-top: 1rem; opacity: 0.9;"
+                        ),
+                        class_="welcome-banner"
+                    )
+                ),
+
+                # Main content cards
+                ui.layout_column_wrap(
+                    ui.card(
+                        ui.card_header("🎯 About This Tool"),
+                        ui.div(
+                            ui.p(
+                                "This application implements Phase 2 of the Ecological Value Assessment (EVA) framework, "
+                                "providing a comprehensive toolkit for marine biodiversity assessment.",
+                                style="font-size: 1.05rem; line-height: 1.8;"
+                            ),
+                            ui.tags.ul(
+                                ui.tags.li("📍 Analyze gridded ecosystem data"),
+                                ui.tags.li("🔬 Apply multiple assessment criteria"),
+                                ui.tags.li("📊 Generate comprehensive EV scores"),
+                                ui.tags.li("💾 Export results for further analysis"),
+                                style="line-height: 2.2; font-size: 1rem;"
+                            ),
+                            class_="markdown-content"
+                        )
+                    ),
+
+                    ui.card(
+                        ui.card_header("🚀 Getting Started"),
+                        ui.div(
+                            ui.tags.ol(
+                                ui.tags.li(
+                                    ui.strong("📖 Learn the Methodology: "),
+                                    "Visit the Method tab for terminology and AQ guide"
+                                ),
+                                ui.tags.li(
+                                    ui.strong("📁 Upload Your Data: "),
+                                    "Use the Data Input tab with your CSV file"
+                                ),
+                                ui.tags.li(
+                                    ui.strong("⚙️ Configure Features: "),
+                                    "Set up your ecosystem components"
+                                ),
+                                ui.tags.li(
+                                    ui.strong("📊 View Results: "),
+                                    "Analyze AQ scores and EV values"
+                                ),
+                                ui.tags.li(
+                                    ui.strong("💾 Export Data: "),
+                                    "Download comprehensive results"
+                                ),
+                                style="line-height: 2.5; font-size: 1rem;"
+                            ),
+                            class_="markdown-content"
+                        )
+                    ),
+                    width=1/2
+                ),
+
+                ui.hr(),
+
+                # Key concepts
+                ui.card(
+                    ui.card_header("📖 Key Concepts"),
+                    ui.layout_column_wrap(
+                        ui.div(
+                            ui.h4("EVA", style="color: #006994; font-weight: 700; margin-bottom: 0.5rem;"),
+                            ui.p("Ecological Value Assessment", style="color: #6c757d; margin: 0;"),
+                            ui.p("Framework for evaluating marine ecosystem importance", style="font-size: 0.9rem; margin-top: 0.5rem;"),
+                            style="padding: 1rem; background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border-radius: 8px;"
+                        ),
+                        ui.div(
+                            ui.h4("EV", style="color: #00b8d4; font-weight: 700; margin-bottom: 0.5rem;"),
+                            ui.p("Ecological Value", style="color: #6c757d; margin: 0;"),
+                            ui.p("Quantitative measure of ecosystem significance", style="font-size: 0.9rem; margin-top: 0.5rem;"),
+                            style="padding: 1rem; background: linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%); border-radius: 8px;"
+                        ),
+                        ui.div(
+                            ui.h4("AQ", style="color: #28a745; font-weight: 700; margin-bottom: 0.5rem;"),
+                            ui.p("Assessment Questions", style="color: #6c757d; margin: 0;"),
+                            ui.p("Criteria for evaluating ecological features", style="font-size: 0.9rem; margin-top: 0.5rem;"),
+                            style="padding: 1rem; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-radius: 8px;"
+                        ),
+                        ui.div(
+                            ui.h4("EC", style="color: #ff9800; font-weight: 700; margin-bottom: 0.5rem;"),
+                            ui.p("Ecosystem Component", style="color: #6c757d; margin: 0;"),
+                            ui.p("Species or habitats being assessed", style="font-size: 0.9rem; margin-top: 0.5rem;"),
+                            style="padding: 1rem; background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border-radius: 8px;"
+                        ),
+                        width=1/4
+                    )
+                ),
+
+                # Footer
+                ui.div(
+                    ui.p(
+                        "📄 ", ui.strong("Reference: "),
+                        "Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA)",
+                        style="margin: 0.5rem 0;"
+                    ),
+                    ui.p(
+                        "👤 ", ui.strong("Template by: "),
+                        "A. Franco (15/10/2025)",
+                        style="margin: 0.5rem 0;"
+                    ),
+                    ui.p(
+                        "🔬 ", ui.strong("Project: "),
+                        "MARBEFES - Marine Biodiversity and Ecosystem Functioning",
+                        style="margin: 0.5rem 0;"
+                    ),
+                    class_="app-footer"
+                )
+            )
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_grid'",
         ui.layout_sidebar(
             ui.sidebar(
                 ui.div(
@@ -806,182 +1282,9 @@ app_ui = ui.page_navbar(
                 class_="main-content",
             ),
         ),
-    ),
-    ui.nav_panel(
-        "🏠 Home",
-        ui.layout_sidebar(
-            ui.sidebar(
-                ui.div(
-                    ui.div(
-                        ui.div(
-                            ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 50px; margin-right: 10px;">'),
-                            ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 50px;">'),
-                            style="display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; padding: 10px; background: white; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"
-                        ),
-                        ui.h4("MARBEFES EVA", style="text-align: center; color: #006994; font-weight: 700;"),
-                        ui.p("Phase 2 Assessment Tool", style="text-align: center; color: #6c757d; font-size: 0.9rem;"),
-                        style="margin-bottom: 1.5rem;"
-                    ),
                 ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("✨ Features", style="color: #006994; font-weight: 600; margin-bottom: 1rem;"),
-                    ui.tags.ul(
-                        ui.tags.li("📊 Calculate assessment questions (AQ)"),
-                        ui.tags.li("🌍 Compute ecological value (EV)"),
-                        ui.tags.li("📈 Aggregate total EV scores"),
-                        style="line-height: 2; color: #495057;"
-                    ),
-                    class_="info-box"
-                ),
-                ui.hr(),
-                ui.div(
-                    ui.h5("📋 Quick Start", style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;"),
-                    ui.p(
-                        "1. Upload your data",
-                        ui.br(),
-                        "2. Configure features",
-                        ui.br(),
-                        "3. View results",
-                        style="line-height: 2; color: #495057;"
-                    )
-                ),
-                width=320
-            ),
-            ui.div(
-                # Welcome Banner
-                ui.div(
-                    ui.div(
-                        ui.h1(
-                            ui.div(
-                                ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 60px; margin-right: 15px;">'),
-                                ui.span("MARBEFES", style="font-weight: 800;"),
-                                ui.HTML('<img src="iecs.png" alt="IECS Logo" style="height: 60px; margin-left: 15px;">'),
-                                style="display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; justify-content: center;"
-                            ),
-                            style="margin: 0;"
-                        ),
-                        ui.h2("Ecological Value Assessment - Phase 2", style="font-weight: 300; font-size: 1.8rem; margin: 0.5rem 0;"),
-                        ui.p(
-                            "🇪🇺 Funded by the European Union's Horizon Europe Research Programme",
-                            style="font-size: 1rem; margin-top: 1rem; opacity: 0.9;"
-                        ),
-                        class_="welcome-banner"
-                    )
-                ),
-
-                # Main content cards
-                ui.layout_column_wrap(
-                    ui.card(
-                        ui.card_header("🎯 About This Tool"),
-                        ui.div(
-                            ui.p(
-                                "This application implements Phase 2 of the Ecological Value Assessment (EVA) framework, "
-                                "providing a comprehensive toolkit for marine biodiversity assessment.",
-                                style="font-size: 1.05rem; line-height: 1.8;"
-                            ),
-                            ui.tags.ul(
-                                ui.tags.li("📍 Analyze gridded ecosystem data"),
-                                ui.tags.li("🔬 Apply multiple assessment criteria"),
-                                ui.tags.li("📊 Generate comprehensive EV scores"),
-                                ui.tags.li("💾 Export results for further analysis"),
-                                style="line-height: 2.2; font-size: 1rem;"
-                            ),
-                            class_="markdown-content"
-                        )
-                    ),
-
-                    ui.card(
-                        ui.card_header("🚀 Getting Started"),
-                        ui.div(
-                            ui.tags.ol(
-                                ui.tags.li(
-                                    ui.strong("📖 Learn the Methodology: "),
-                                    "Visit the Method tab for terminology and AQ guide"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("📁 Upload Your Data: "),
-                                    "Use the Data Input tab with your CSV file"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("⚙️ Configure Features: "),
-                                    "Set up your ecosystem components"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("📊 View Results: "),
-                                    "Analyze AQ scores and EV values"
-                                ),
-                                ui.tags.li(
-                                    ui.strong("💾 Export Data: "),
-                                    "Download comprehensive results"
-                                ),
-                                style="line-height: 2.5; font-size: 1rem;"
-                            ),
-                            class_="markdown-content"
-                        )
-                    ),
-                    width=1/2
-                ),
-
-                ui.hr(),
-
-                # Key concepts
-                ui.card(
-                    ui.card_header("📖 Key Concepts"),
-                    ui.layout_column_wrap(
-                        ui.div(
-                            ui.h4("EVA", style="color: #006994; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Ecological Value Assessment", style="color: #6c757d; margin: 0;"),
-                            ui.p("Framework for evaluating marine ecosystem importance", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); border-radius: 8px;"
-                        ),
-                        ui.div(
-                            ui.h4("EV", style="color: #00b8d4; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Ecological Value", style="color: #6c757d; margin: 0;"),
-                            ui.p("Quantitative measure of ecosystem significance", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #e0f7fa 0%, #b2ebf2 100%); border-radius: 8px;"
-                        ),
-                        ui.div(
-                            ui.h4("AQ", style="color: #28a745; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Assessment Questions", style="color: #6c757d; margin: 0;"),
-                            ui.p("Criteria for evaluating ecological features", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border-radius: 8px;"
-                        ),
-                        ui.div(
-                            ui.h4("EC", style="color: #ff9800; font-weight: 700; margin-bottom: 0.5rem;"),
-                            ui.p("Ecosystem Component", style="color: #6c757d; margin: 0;"),
-                            ui.p("Species or habitats being assessed", style="font-size: 0.9rem; margin-top: 0.5rem;"),
-                            style="padding: 1rem; background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%); border-radius: 8px;"
-                        ),
-                        width=1/4
-                    )
-                ),
-
-                # Footer
-                ui.div(
-                    ui.p(
-                        "📄 ", ui.strong("Reference: "),
-                        "Franco A. and Amorim E. (2025) Ecological Value Assessment (EVA)",
-                        style="margin: 0.5rem 0;"
-                    ),
-                    ui.p(
-                        "👤 ", ui.strong("Template by: "),
-                        "A. Franco (15/10/2025)",
-                        style="margin: 0.5rem 0;"
-                    ),
-                    ui.p(
-                        "🔬 ", ui.strong("Project: "),
-                        "MARBEFES - Marine Biodiversity and Ecosystem Functioning",
-                        style="margin: 0.5rem 0;"
-                    ),
-                    class_="app-footer"
-                )
-            )
-        )
-    ),
-
-    ui.nav_panel(
-        "📁 Data Input",
+                ui.panel_conditional(
+                    "input.navigation === 'nav_data'",
         ui.layout_sidebar(
             ui.sidebar(
                 ui.div(
@@ -1139,10 +1442,10 @@ app_ui = ui.page_navbar(
                             ui.div(
                                 ui.h5("💡 Example Structure", style="color: #006994; font-weight: 600; margin-top: 1.5rem;"),
                                 ui.tags.pre(
-                                    """Subzone ID, Habitat1, Habitat2, Habitat3, ...
-A0, 1, 0, 1, ...
-A1, 0, 1, 0, ...
-A2, 1, 1, 0, ...""",
+                                    "Subzone ID, Habitat1, Habitat2, Habitat3, ...\n"
+                                    "A0, 1, 0, 1, ...\n"
+                                    "A1, 0, 1, 0, ...\n"
+                                    "A2, 1, 1, 0, ...",
                                     style="background: #2d3748; color: #68d391; padding: 1rem; border-radius: 8px; font-size: 0.9rem;"
                                 ),
                             ),
@@ -1154,11 +1457,10 @@ A2, 1, 1, 0, ...""",
                 ui.output_ui("data_preview_ui"),
                 ui.output_ui("geo_preview_ui")
             )
-        )
-    ),
-
-    ui.nav_panel(
-        "⚙️ EC Features",
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_features'",
         ui.layout_sidebar(
             ui.sidebar(
                 ui.div(
@@ -1196,11 +1498,10 @@ A2, 1, 1, 0, ...""",
                     )
                 )
             )
-        )
-    ),
-
-    ui.nav_panel(
-        "📊 AQ + EV Results",
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_results'",
         ui.div(
             ui.card(
                 ui.card_header("📈 Assessment Questions and Ecological Value Results"),
@@ -1219,11 +1520,10 @@ A2, 1, 1, 0, ...""",
                     style="padding: 1rem;"
                 )
             )
-        )
-    ),
-
-    ui.nav_panel(
-        "🏆 Total EV",
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_ev'",
         ui.div(
             ui.card(
                 ui.card_header("🏆 Total Ecological Value Across All ECs"),
@@ -1257,11 +1557,10 @@ A2, 1, 1, 0, ...""",
                     style="padding: 1rem;"
                 )
             )
-        )
-    ),
-
-    ui.nav_panel(
-        "📈 Visualization",
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_viz'",
         ui.card(
             ui.card_header("📈 Data Visualization"),
             ui.layout_sidebar(
@@ -1295,11 +1594,10 @@ A2, 1, 1, 0, ...""",
                     style="padding: 1.5rem;"
                 )
             )
-        )
-    ),
-
-    ui.nav_panel(
-        "🗺️ Map",
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_map'",
         ui.card(
             ui.card_header("🗺️ Spatial Map Visualization"),
             ui.layout_sidebar(
@@ -1341,11 +1639,10 @@ A2, 1, 1, 0, ...""",
                     style="min-height: 600px;"
                 )
             )
-        )
-    ),
-
-    ui.nav_panel(
-        "📋 Physical Accounts",
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_pa'",
         ui.layout_sidebar(
             ui.sidebar(
                 ui.div(
@@ -1423,11 +1720,10 @@ A2, 1, 1, 0, ...""",
                     ui.div(ui.output_ui("eunis_accounts_ui"), style="padding: 1rem;")
                 ),
             )
-        )
-    ),
-
-    ui.nav_panel(
-        "📖 Help & Method",
+        ),
+                ),
+                ui.panel_conditional(
+                    "input.navigation === 'nav_help'",
         ui.div(
             ui.div(
                 ui.h2("📖 Help & Methodology Reference", style="color: #006994; font-weight: 700; margin-bottom: 1.5rem;"),
@@ -1513,17 +1809,13 @@ A2, 1, 1, 0, ...""",
                     style="padding: 1rem;"
                 )
             )
-        )
+        ),
+                ),
+                class_="main-content-area"
+            ),
+            class_="app-body"
+        ),
+        class_="app-wrapper"
     ),
-
-    title=ui.div(
-        ui.HTML('<img src="marbefes.png" alt="MARBEFES Logo" style="height: 35px; margin-right: 10px;">'),
-        ui.span(f"MARBEFES EVA v{APP_VERSION_STR}", style="font-weight: 700;"),
-        style="display: flex; align-items: center;",
-        class_="logo-container"
-    ),
-    id="navbar",
-    header=ui.tags.head(
-        ui.HTML(custom_css)
-    )
+    title=f"MARBEFES EVA v{APP_VERSION_STR}",
 )
