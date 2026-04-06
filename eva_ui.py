@@ -704,6 +704,7 @@ app_ui = ui.page_navbar(
             ),
             ui.div(
                 ui.output_ui("grid_status_output"),
+                ui.output_ui("map_layer_selector_ui"),
                 ui.output_ui("unified_map_output"),
                 class_="main-content",
             ),

@@ -406,12 +406,62 @@ def server(input, output, session):
         generated_grid.set(None)
         ui.notification_show(f"Boundary loaded: {len(gdf)} polygon(s)", type="message", duration=4)
 
+    # ── SDM layer colour helpers ──────────────────────────────────────────────
+
+    # Column names in sdm_covariates GDF → human label mapping
+    _SDM_MAP_COLS = {
+        "dominant_EUNIS":  "EUNIS L3 Habitat",
+        "substrate_type":  "Seabed Substrate",
+        "energy_class":    "Energy Class",
+        "bio_zone":        "Biological Zone",
+        "helcom_class":    "HELCOM HUB Class",
+        "depth_m":         "Water Depth (m)",
+    }
+
+    def _covariate_choices() -> dict:
+        """Return {col: label} dict for available covariate columns in sdm_covariates."""
+        cov = sdm_covariates.get()
+        if cov is None:
+            return {}
+        return {col: lbl for col, lbl in _SDM_MAP_COLS.items() if col in cov.columns}
+
+    @output
+    @render.ui
+    def map_layer_selector_ui():
+        grid = generated_grid.get()
+        if grid is None:
+            return ui.div()
+        choices = _covariate_choices()
+        if not choices:
+            return ui.div()
+        choices_with_none = {"none": "— Grid only (no colour) —"} | choices
+        return ui.div(
+            ui.input_select(
+                "map_covariate_layer",
+                None,
+                choices=choices_with_none,
+                selected="none",
+                width="100%",
+            ),
+            style=(
+                "display: flex; align-items: center; gap: 0.5rem; "
+                "padding: 0.4rem 0.6rem; background: #f8f9fa; "
+                "border-bottom: 1px solid #dee2e6; font-size: 0.85rem;"
+            ),
+        )
+
     @output
     @render.ui
     def unified_map_output():
         boundary = boundary_polygon.get()
         grid = generated_grid.get()
+        cov = sdm_covariates.get()
         polygon_source = input.polygon_source()
+        selected_layer = "none"
+        try:
+            selected_layer = input.map_covariate_layer() or "none"
+        except Exception:
+            pass
 
         # Determine map center/zoom
         if boundary is not None:
@@ -498,19 +548,95 @@ def server(input, output, session):
                 name="Boundary",
             ).add_to(m)
 
-        # Grid overlay
+        # Grid overlay — plain or coloured by SDM covariate
         if grid is not None:
-            folium.GeoJson(
-                grid.to_json(),
-                style_function=lambda x: {
-                    "fillColor": "#4da6ff",
-                    "color": "#006994",
-                    "weight": 1,
-                    "fillOpacity": 0.3,
-                },
-                tooltip=folium.GeoJsonTooltip(fields=["Subzone ID"]),
-                name="Hex Grid",
-            ).add_to(m)
+            use_cov = (
+                selected_layer not in (None, "none", "")
+                and cov is not None
+                and selected_layer in cov.columns
+            )
+            if use_cov:
+                # Merge covariate column onto grid for styling
+                id_col = "Subzone ID" if "Subzone ID" in grid.columns else "Subzone_ID"
+                grid_with_cov = grid.merge(
+                    cov[["Subzone_ID", selected_layer]].rename(columns={"Subzone_ID": id_col}),
+                    on=id_col,
+                    how="left",
+                )
+                is_numeric = selected_layer == "depth_m"
+                if is_numeric:
+                    vals = grid_with_cov[selected_layer].dropna()
+                    vmin = float(vals.min()) if len(vals) else 0.0
+                    vmax = float(vals.max()) if len(vals) else 1.0
+                    import branca.colormap as cm
+                    colormap = cm.linear.Blues_09.scale(vmin, vmax)
+                    colormap.caption = _SDM_MAP_COLS.get(selected_layer, selected_layer)
+                    colormap.add_to(m)
+                    color_dict = {}
+                else:
+                    cats = grid_with_cov[selected_layer].dropna().unique().tolist()
+                    palette = [
+                        "#e41a1c","#377eb8","#4daf4a","#984ea3","#ff7f00",
+                        "#a65628","#f781bf","#999999","#66c2a5","#fc8d62",
+                        "#8da0cb","#e78ac3","#a6d854","#ffd92f","#e5c494",
+                    ]
+                    color_dict = {cat: palette[i % len(palette)] for i, cat in enumerate(sorted(cats))}
+                    colormap = None
+
+                tooltip_fields = [id_col, selected_layer]
+                tooltip_fields = [f for f in tooltip_fields if f in grid_with_cov.columns]
+
+                def _make_style(row_col, is_num, c_dict, c_map, v_min, v_max):
+                    def style_fn(feature):
+                        val = feature["properties"].get(row_col)
+                        if val is None or (isinstance(val, float) and np.isnan(val)):
+                            return {"fillColor": "#cccccc", "color": "#999", "weight": 0.5, "fillOpacity": 0.5}
+                        if is_num:
+                            color = c_map(float(val))
+                        else:
+                            color = c_dict.get(str(val), "#cccccc")
+                        return {"fillColor": color, "color": "#555", "weight": 0.5, "fillOpacity": 0.75}
+                    return style_fn
+
+                style_fn = _make_style(
+                    selected_layer, is_numeric, color_dict,
+                    colormap if is_numeric else None,
+                    vmin if is_numeric else 0, vmax if is_numeric else 1,
+                )
+                folium.GeoJson(
+                    grid_with_cov.to_json(),
+                    style_function=style_fn,
+                    tooltip=folium.GeoJsonTooltip(fields=tooltip_fields),
+                    name=f"Hex Grid — {_SDM_MAP_COLS.get(selected_layer, selected_layer)}",
+                ).add_to(m)
+
+                # Add simple legend for categorical layers
+                if not is_numeric and color_dict:
+                    legend_items = "".join(
+                        f'<li><span style="background:{c};width:14px;height:14px;display:inline-block;'
+                        f'border-radius:2px;margin-right:5px;"></span>{v}</li>'
+                        for v, c in list(color_dict.items())[:15]
+                    )
+                    legend_html = (
+                        '<div style="position:fixed;bottom:30px;right:10px;z-index:1000;'
+                        'background:white;padding:8px 12px;border-radius:6px;'
+                        'box-shadow:0 1px 5px rgba(0,0,0,0.4);font-size:12px;max-height:300px;overflow-y:auto;">'
+                        f'<b>{_SDM_MAP_COLS.get(selected_layer, selected_layer)}</b>'
+                        f'<ul style="list-style:none;padding:0;margin:4px 0 0;">{legend_items}</ul></div>'
+                    )
+                    m.get_root().html.add_child(folium.Element(legend_html))
+            else:
+                folium.GeoJson(
+                    grid.to_json(),
+                    style_function=lambda x: {
+                        "fillColor": "#4da6ff",
+                        "color": "#006994",
+                        "weight": 1,
+                        "fillOpacity": 0.3,
+                    },
+                    tooltip=folium.GeoJsonTooltip(fields=["Subzone ID"]),
+                    name="Hex Grid",
+                ).add_to(m)
 
         folium.LayerControl().add_to(m)
         return ui.HTML(f'<div style="height: 650px;">{m._repr_html_()}</div>')
