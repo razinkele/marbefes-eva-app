@@ -25,7 +25,7 @@ EVA_MODULE_VERSION = "2.2.0"       # EVA assessment engine (AQ1-15, EV calculati
 PA_MODULE_VERSION = "1.0.0"        # Physical Accounts (Extent, Supply)
 
 # Build metadata
-BUILD_DATE = "2026-03-18"
+BUILD_DATE = "2026-04-06"
 CODENAME = "Production Ready"      # Release codename
 
 # ---------------------------------------------------------------------------
