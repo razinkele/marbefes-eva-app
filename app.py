@@ -1883,10 +1883,21 @@ def server(input, output, session):
 
     @reactive.Effect
     @reactive.event(geo_data)
+    def _reset_pa_assignments_on_new_grid():
+        """Reset habitat assignments when a new spatial grid is loaded."""
+        if geo_data.get() is None:
+            pa_habitat_assignments.set({})
+
+    @reactive.Effect
     def _update_pa_assignments():
+        """Collect all pa_assign_* dropdown values into a single dict.
+
+        This effect depends on all pa_assign_* inputs reactively, so it
+        re-runs whenever any habitat assignment dropdown changes.
+        It also depends on geo_data so it re-runs after a new grid is loaded.
+        """
         gdf = geo_data.get()
         if gdf is None:
-            pa_habitat_assignments.set({})
             return
         assignments = {}
         for sid in gdf["Subzone ID"].tolist():
