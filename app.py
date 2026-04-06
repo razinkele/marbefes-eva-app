@@ -3291,6 +3291,31 @@ def server(input, output, session):
             ).add_to(fg)
         fg.add_to(m)
 
+    def _add_sdm_grid(m, grid):
+        """Add the hex grid as a semi-transparent toggleable layer to folium map m."""
+        if grid is None:
+            return
+        try:
+            grid_4326 = grid.to_crs("EPSG:4326") if grid.crs and grid.crs.to_epsg() != 4326 else grid
+            folium.GeoJson(
+                grid_4326.__geo_interface__,
+                style_function=lambda _: {
+                    "fillColor": "none",
+                    "color": "#1a6496",
+                    "weight": 0.6,
+                    "fillOpacity": 0,
+                    "opacity": 0.5,
+                },
+                tooltip=folium.GeoJsonTooltip(
+                    fields=["Subzone ID"] if "Subzone ID" in grid_4326.columns else [],
+                    aliases=["Subzone:"] if "Subzone ID" in grid_4326.columns else [],
+                ),
+                name="Hex Grid",
+                show=True,
+            ).add_to(m)
+        except Exception as exc:
+            logger.warning("Could not add grid to SDM map: %s", exc)
+
     # ── SDM: map output ──────────────────────────────────────────────────────
 
     @output
@@ -3301,10 +3326,15 @@ def server(input, output, session):
         cov = sdm_covariates.get()
         grid = generated_grid.get()
 
-        # ── No model yet: show sampling sites if available ───────────────────
+        # ── No model yet: show grid + sampling sites if available ────────────
         if res is None or cov is None:
             data, lat_col, lon_col = _get_sdm_sample_df()
-            if data is not None and lat_col in data.columns and lon_col in data.columns:
+            if grid is not None:
+                g4326 = grid.to_crs("EPSG:4326") if grid.crs and grid.crs.to_epsg() != 4326 else grid
+                center = [float(g4326.geometry.centroid.y.mean()),
+                          float(g4326.geometry.centroid.x.mean())]
+                zoom = 7
+            elif data is not None and lat_col in data.columns and lon_col in data.columns:
                 lats = pd.to_numeric(data[lat_col], errors="coerce").dropna()
                 lons = pd.to_numeric(data[lon_col], errors="coerce").dropna()
                 if len(lats) > 0:
@@ -3316,6 +3346,7 @@ def server(input, output, session):
                 center = [54.0, 21.0]; zoom = 5
             m = folium.Map(location=center, zoom_start=zoom, tiles="CartoDB positron")
             folium.plugins.Fullscreen(position="topright").add_to(m)
+            _add_sdm_grid(m, grid)
             _add_sdm_sample_sites(m)
             folium.LayerControl().add_to(m)
             if res is None:
@@ -3359,6 +3390,7 @@ def server(input, output, session):
             name=f"SDM — {response_col}",
         ).add_to(m)
 
+        _add_sdm_grid(m, grid)
         _add_sdm_sample_sites(m, response_col=response_col)
 
         folium.LayerControl().add_to(m)
@@ -3448,6 +3480,7 @@ def server(input, output, session):
         ).add_to(m)
 
         _add_sdm_sample_sites(m)
+        _add_sdm_grid(m, generated_grid.get())
 
         folium.LayerControl().add_to(m)
         return ui.HTML(m._repr_html_())
