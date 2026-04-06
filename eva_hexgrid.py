@@ -2,6 +2,7 @@
 
 import json
 import logging
+from pathlib import Path
 
 import geopandas as gpd
 import h3
@@ -10,13 +11,95 @@ from shapely.validation import make_valid
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Land mask — cached module-level to avoid re-downloading each call
+# ---------------------------------------------------------------------------
 
-def generate_h3_grid(polygon_gdf: gpd.GeoDataFrame, resolution: int) -> gpd.GeoDataFrame:
+_LAND_MASK: gpd.GeoDataFrame | None = None
+_LAND_MASK_CACHE_PATH = Path(__file__).parent / "data" / "ne_50m_land.gpkg"
+_LAND_MASK_URL = (
+    "https://naturalearth.s3.amazonaws.com/50m_physical/ne_50m_land.zip"
+)
+
+
+def _load_land_mask() -> gpd.GeoDataFrame | None:
+    """Return the Natural Earth 50m land polygon GDF (cached after first load).
+
+    Tries the local cache first; falls back to downloading from Natural Earth.
+    Returns None if both fail (graceful degradation — no clipping applied).
+    """
+    global _LAND_MASK
+    if _LAND_MASK is not None:
+        return _LAND_MASK
+
+    # 1. Local cache
+    if _LAND_MASK_CACHE_PATH.exists():
+        try:
+            _LAND_MASK = gpd.read_file(_LAND_MASK_CACHE_PATH)
+            logger.info("Land mask loaded from local cache: %s", _LAND_MASK_CACHE_PATH)
+            return _LAND_MASK
+        except Exception as exc:
+            logger.warning("Could not read cached land mask: %s", exc)
+
+    # 2. Download from Natural Earth
+    try:
+        logger.info("Downloading Natural Earth 50m land polygons…")
+        land = gpd.read_file(_LAND_MASK_URL)
+        _LAND_MASK_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        land.to_file(_LAND_MASK_CACHE_PATH, driver="GPKG")
+        _LAND_MASK = land
+        logger.info("Land mask downloaded and cached to %s", _LAND_MASK_CACHE_PATH)
+        return _LAND_MASK
+    except Exception as exc:
+        logger.warning(
+            "Could not download land mask — grid will not be clipped to sea: %s", exc
+        )
+        return None
+
+
+def _remove_land_hexes(
+    grid_gdf: gpd.GeoDataFrame, land_gdf: gpd.GeoDataFrame
+) -> gpd.GeoDataFrame:
+    """Remove hexagons whose centroid falls on land.
+
+    Uses a spatial join on centroids against the land polygon layer.
+    Hexes fully at sea are retained; land-centred hexes are dropped.
+    Subzone IDs are renumbered sequentially after filtering.
+    """
+    # Compute centroids in a projected CRS to avoid geopandas warning,
+    # then convert back to WGS84 for the spatial join against land polygons.
+    centroids_geom = grid_gdf.geometry.to_crs(epsg=3857).centroid.to_crs(epsg=4326)
+    centroids = grid_gdf.copy()
+    centroids.geometry = centroids_geom
+
+    # Spatial join: find centroids that fall within any land polygon
+    land_hits = centroids.sjoin(
+        land_gdf[["geometry"]], how="inner", predicate="within"
+    ).index
+
+    filtered = grid_gdf.drop(index=land_hits).reset_index(drop=True)
+
+    # Renumber Subzone IDs to keep them sequential
+    width = max(3, len(str(len(filtered))))
+    filtered["Subzone ID"] = [f"HEX_{i + 1:0{width}d}" for i in range(len(filtered))]
+
+    removed = len(grid_gdf) - len(filtered)
+    if removed:
+        logger.info("Land mask: removed %d land hexagons (%d remaining)", removed, len(filtered))
+
+    return filtered
+
+
+def generate_h3_grid(
+    polygon_gdf: gpd.GeoDataFrame, resolution: int, clip_to_sea: bool = True
+) -> gpd.GeoDataFrame:
     """Generate H3 hexagonal grid cells covering the given polygon(s).
 
     Args:
         polygon_gdf: GeoDataFrame with polygon geometry (any CRS).
         resolution: H3 resolution level (7, 8, or 9).
+        clip_to_sea: If True (default), remove hexagons whose centroid falls
+            on land using Natural Earth 50m land polygons.
 
     Returns:
         GeoDataFrame with 'Subzone ID' and 'geometry' columns in EPSG:4326.
@@ -74,6 +157,18 @@ def generate_h3_grid(polygon_gdf: gpd.GeoDataFrame, resolution: int) -> gpd.GeoD
     logger.info(
         f"Generated {len(result)} H3 cells at resolution {resolution}"
     )
+
+    # Clip to sea: remove hexes whose centroid falls on land
+    if clip_to_sea:
+        land = _load_land_mask()
+        if land is not None:
+            result = _remove_land_hexes(result, land)
+            if not len(result):
+                raise ValueError(
+                    "All generated hexagons fall on land. "
+                    "Please draw a marine study area."
+                )
+
     return result
 
 
