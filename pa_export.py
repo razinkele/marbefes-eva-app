@@ -59,10 +59,16 @@ def _build_pa_summary_sheet(ws, metadata, extent_df, completeness):
     ):
         df = extent_df if isinstance(extent_df, pd.DataFrame) else pd.DataFrame(extent_df)
         habitat_count = len(df)
-        # Sum the first numeric column as the area column
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-        if numeric_cols:
-            total_extent = float(df[numeric_cols[0]].sum())
+        # Look up area column by name (robust to column-order changes)
+        area_col = next(
+            (c for c in ["area", "total_area", "area_Ha", "area_km2"] if c in df.columns),
+            None,
+        )
+        if area_col is None:
+            numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+            area_col = numeric_cols[0] if numeric_cols else None
+        if area_col:
+            total_extent = float(df[area_col].sum())
 
     now = pd.Timestamp.now()
     rows = [

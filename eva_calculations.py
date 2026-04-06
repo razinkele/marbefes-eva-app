@@ -47,7 +47,7 @@ def detect_data_type(df: pd.DataFrame) -> str:
         try:
             has_decimals = any(
                 isinstance(v, (int, float)) and v != int(v)
-                for v in values if pd.notna(v) and v != 0
+                for v in values if pd.notna(v)
             )
         except (TypeError, ValueError):
             has_decimals = False
@@ -95,6 +95,9 @@ def rescale_qualitative(df: pd.DataFrame) -> pd.DataFrame:
         # Simple rescaling: 1 -> MAX_EV_SCALE, 0 -> 0
         rescaled[col] = values * MAX_EV_SCALE
 
+        # Clamp to [0, MAX_EV_SCALE]: non-binary input must not produce EV > 5
+        rescaled[col] = rescaled[col].clip(lower=0, upper=MAX_EV_SCALE)
+
         # Ensure no NaN in output
         rescaled[col] = rescaled[col].fillna(0)
 
@@ -131,6 +134,8 @@ def rescale_quantitative(df: pd.DataFrame) -> pd.DataFrame:
         else:
             # All non-NaN values are the same — feature is uniformly present
             if min_val > 0:
+                # Equal positive values across all subzones: feature is uniformly
+                # present. Relative abundance within this dataset is maximum.
                 rescaled[col] = MAX_EV_SCALE  # uniform positive = max relative presence
             else:
                 rescaled[col] = 0  # all zeros = absent
@@ -160,9 +165,11 @@ def classify_features(
     for col in feature_cols:
         # Intrinsic classification based on data
         positive_count = (df[col] > 0).sum()
-        # Use the total subzone count (including NaN rows) as the denominator so
-        # that missing data does not artificially inflate the "local rarity" proportion.
-        # E.g., 1 presence in 19 valid + 1 NaN = 1/20 (LRF), not 1/19 (ROF).
+        # Use the total subzone count (including NaN rows) as the denominator to
+        # prevent artificially *inflating* the occurrence proportion when only a
+        # subset of subzones was surveyed. A feature present in 1 of 5 surveyed rows
+        # (20%) could be incorrectly classified as ROF, whereas globally it occurs in
+        # only 1 of 20 subzones (5% → correctly LRF).
         total_count = len(df[col])
         proportion = positive_count / total_count if total_count > 0 else 0
 

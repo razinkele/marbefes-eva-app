@@ -101,7 +101,10 @@ def compute_extent(
     # Reproject and compute area in m²
     metric = reproject_to_metric(subset, original_crs)
     if unit not in AREA_CONVERSIONS:
-        logger.warning("Unknown area unit %r; defaulting to 'Ha'.", unit)
+        raise ValueError(
+            f"Unknown area unit {unit!r}. Supported units: {list(AREA_CONVERSIONS.keys())}. "
+            "Please select a valid unit in the Physical Accounts settings."
+        )
     conversion = AREA_CONVERSIONS.get(unit, 10_000)
     metric["_area"] = metric.geometry.area / conversion
 

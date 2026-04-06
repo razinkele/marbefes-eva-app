@@ -131,12 +131,22 @@ def _build_summary_sheet(writer, results, df, data_type, metadata, ec_store):
             if ec["results"] is not None:
                 ev_vals.extend(ec["results"]["EV"].tolist())
         if ev_vals:
-            summary_rows.extend([
-                ("Total EV (Sum, all ECs)", f"{sum(ev_vals):.4f}"),
-                ("Average EV (across all subzones)", f"{np.mean(ev_vals):.4f}"),
-                ("Maximum EV", f"{max(ev_vals):.4f}"),
-                ("Minimum EV", f"{min(ev_vals):.4f}"),
-            ])
+            # Use MAX-aggregated Total EV per subzone for summary stats (EVA methodology)
+            from eva_calculations import merge_multi_ec_ev
+            merged_ev = merge_multi_ec_ev(ec_store)
+            if merged_ev is not None and "Total EV" in merged_ev.columns:
+                total_ev_series = merged_ev["Total EV"]
+                summary_rows.extend([
+                    ("Mean Total EV (MAX per subzone)", f"{total_ev_series.mean():.4f}"),
+                    ("Maximum Total EV", f"{total_ev_series.max():.4f}"),
+                    ("Minimum Total EV", f"{total_ev_series.min():.4f}"),
+                ])
+            else:
+                summary_rows.extend([
+                    ("Average EV (across all subzones)", f"{np.mean(ev_vals):.4f}"),
+                    ("Maximum EV", f"{max(ev_vals):.4f}"),
+                    ("Minimum EV", f"{min(ev_vals):.4f}"),
+                ])
 
         summary_rows.extend([
             ("", ""),

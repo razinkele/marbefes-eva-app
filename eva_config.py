@@ -224,6 +224,8 @@ CLASSIFICATION_BADGE_COLORS = {
 # ---------------------------------------------------------------------------
 # Map constants
 # ---------------------------------------------------------------------------
+# IMPORTANT: Always use include_lowest=True when calling pd.cut() with these bins
+# so that EV=0 is classified as "Very Low" rather than falling outside (0,1] → NaN.
 EVA_5CLASS_BINS = [0, 1, 2, 3, 4, 5]
 EVA_5CLASS_COLORS = ['#3288bd', '#99d594', '#e6f598', '#fc8d59', '#d53e4f']
 EVA_5CLASS_LABELS = [
