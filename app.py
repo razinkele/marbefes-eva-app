@@ -642,6 +642,7 @@ def server(input, output, session):
                     name="Hex Grid",
                 ).add_to(m)
 
+        folium.plugins.Fullscreen(position='topright').add_to(m)
         folium.LayerControl().add_to(m)
         return ui.HTML(f'<div style="height: 650px;">{m._repr_html_()}</div>')
 

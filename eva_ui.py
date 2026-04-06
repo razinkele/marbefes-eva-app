@@ -958,6 +958,7 @@ app_ui = ui.page_fluid(
                     "input.navigation === 'nav_grid'",
         ui.layout_sidebar(
             ui.sidebar(
+                ui.output_ui("grid_status_output"),
                 ui.accordion(
                     ui.accordion_panel(
                         "1. Define Study Area",
@@ -1280,7 +1281,6 @@ app_ui = ui.page_fluid(
                 width=380,
             ),
             ui.div(
-                ui.output_ui("grid_status_output"),
                 ui.output_ui("map_layer_selector_ui"),
                 ui.output_ui("unified_map_output"),
                 class_="main-content",
