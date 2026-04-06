@@ -1911,6 +1911,39 @@ app_ui = ui.page_fluid(
 
                 ui.hr(),
 
+                # ── Sampling Data Source ─────────────────────────────────────
+                ui.h6("Sampling Data", style="font-weight:600;"),
+                ui.input_radio_buttons(
+                    "sdm_data_source", None,
+                    choices={
+                        "csv":   "📊 Use uploaded CSV",
+                        "dwca":  "🦋 Upload Darwin Core Archive",
+                    },
+                    selected="csv",
+                ),
+                ui.panel_conditional(
+                    "input.sdm_data_source === 'dwca'",
+                    ui.input_file(
+                        "sdm_dwca_file",
+                        "DwC-A zip file (.zip)",
+                        accept=[".zip"],
+                        multiple=False,
+                        width="100%",
+                    ),
+                    ui.input_radio_buttons(
+                        "sdm_dwca_value", "Values to extract",
+                        choices={
+                            "auto":      "Auto (abundance if available)",
+                            "abundance": "Abundance (individualCount)",
+                            "presence":  "Presence/Absence (0/1)",
+                        },
+                        selected="auto",
+                    ),
+                    ui.output_ui("sdm_dwca_status"),
+                ),
+
+                ui.hr(),
+
                 # Response variable
                 ui.h6("Response Variable", style="font-weight:600;"),
                 ui.input_select("sdm_response_col", "Column with species data",

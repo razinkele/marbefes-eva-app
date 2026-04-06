@@ -74,6 +74,8 @@ def server(input, output, session):
     # SDM reactive values
     sdm_results = reactive.Value(None)        # dict: gam_model, idw_model, predictions, diagnostics, feat_names
     sdm_fit_message = reactive.Value("")      # status message for fit button feedback
+    sdm_dwca_df   = reactive.Value(None)      # DataFrame from DwC-A upload for SDM
+    sdm_dwca_info = reactive.Value(None)      # dict with n_sites, n_species, species_list, ...
 
     # DwC-A state
     dwca_info = reactive.Value(None)   # DwC-A summary dict or None if CSV
@@ -2842,13 +2844,21 @@ def server(input, output, session):
     def sdm_prereq_status():
         grid = generated_grid.get()
         cov  = sdm_covariates.get()
-        data = uploaded_data.get()
+        data_source = input.sdm_data_source() if hasattr(input, "sdm_data_source") else "csv"
+        if data_source == "dwca":
+            data = sdm_dwca_df.get()
+            data_label = "DwC-A sampling data"
+            data_hint  = "Upload a Darwin Core Archive in the SDM panel"
+        else:
+            data = uploaded_data.get()
+            data_label = "Sampling data uploaded"
+            data_hint  = "No data (upload in Data Input)"
         items = []
-        ok = lambda msg: ui.tags.li(ui.tags.span("✅ ", style="color:green;"), msg)
+        ok  = lambda msg: ui.tags.li(ui.tags.span("✅ ", style="color:green;"),  msg)
         bad = lambda msg: ui.tags.li(ui.tags.span("⚠️ ", style="color:orange;"), msg)
-        items.append(ok("Hex grid ready") if grid is not None else bad("No hex grid (run Grid Setup)"))
-        items.append(ok("Covariates loaded") if cov is not None else bad("No covariates (fetch in Grid Setup)"))
-        items.append(ok("Sampling data uploaded") if data is not None else bad("No data (upload in Data Input)"))
+        items.append(ok("Hex grid ready")    if grid is not None else bad("No hex grid (run Grid Setup)"))
+        items.append(ok("Covariates loaded") if cov  is not None else bad("No covariates (fetch in Grid Setup)"))
+        items.append(ok(data_label)          if data is not None else bad(data_hint))
         return ui.tags.ul(items, style="padding-left:1rem;font-size:0.83rem;")
 
     @output
@@ -2882,27 +2892,90 @@ def server(input, output, session):
         )
 
     @reactive.effect
-    @reactive.event(sdm_covariates, uploaded_data)
+    @reactive.event(sdm_covariates, uploaded_data, sdm_dwca_df)
     def _update_sdm_response_choices():
-        data = uploaded_data.get()
-        if data is None:
-            ui.update_select("sdm_response_col", choices=[], label="Column with species data")
-            return
-        numeric_cols = [c for c in data.columns
-                        if pd.api.types.is_numeric_dtype(data[c])
-                        and c.lower() not in {"lat", "lon", "latitude", "longitude",
-                                              "x", "y", "subzone id"}]
-        ui.update_select("sdm_response_col", choices=numeric_cols,
-                         selected=numeric_cols[0] if numeric_cols else None)
+        data_source = input.sdm_data_source() if hasattr(input, "sdm_data_source") else "csv"
+        if data_source == "dwca":
+            info = sdm_dwca_info.get()
+            if info is None:
+                ui.update_select("sdm_response_col", choices=[], label="Column with species data")
+                return
+            species = info.get("species_list", [])
+            ui.update_select("sdm_response_col", choices=species,
+                             selected=species[0] if species else None,
+                             label="Species to model")
+        else:
+            data = uploaded_data.get()
+            if data is None:
+                ui.update_select("sdm_response_col", choices=[], label="Column with species data")
+                return
+            numeric_cols = [c for c in data.columns
+                            if pd.api.types.is_numeric_dtype(data[c])
+                            and c.lower() not in {"lat", "lon", "latitude", "longitude",
+                                                  "x", "y", "subzone id"}]
+            ui.update_select("sdm_response_col", choices=numeric_cols,
+                             selected=numeric_cols[0] if numeric_cols else None)
 
-    # ── SDM: fit and predict ─────────────────────────────────────────────────
+    # ── SDM: DwC-A upload handler ─────────────────────────────────────────────
+
+    @reactive.effect
+    @reactive.event(input.sdm_dwca_file)
+    def _handle_sdm_dwca_upload():
+        files = input.sdm_dwca_file()
+        if not files:
+            return
+        try:
+            file_path = files[0]["datapath"]
+            value_pref = input.sdm_dwca_value() if hasattr(input, "sdm_dwca_value") else "auto"
+            df, info = dwca_reader.read_dwca_for_sdm(file_path, value=value_pref)
+            sdm_dwca_df.set(df)
+            sdm_dwca_info.set(info)
+        except Exception as exc:
+            logger.error("DwC-A SDM upload error: %s", exc)
+            sdm_dwca_df.set(None)
+            sdm_dwca_info.set({"error": str(exc)})
+
+    @output
+    @render.ui
+    def sdm_dwca_status():
+        info = sdm_dwca_info.get()
+        if info is None:
+            return ui.p("No DwC-A loaded yet.", style="color:#999;font-size:0.82rem;")
+        if "error" in info:
+            return ui.div(
+                ui.tags.span("❌ Error: ", style="color:red;font-weight:600;"),
+                ui.p(info["error"], style="color:red;font-size:0.82rem;"),
+            )
+        return ui.div(
+            ui.p(
+                f"✅ {info['n_sites']} sites · {info['n_species']} species "
+                f"({info['value_type']})",
+                style="color:green;font-weight:600;font-size:0.82rem;margin-bottom:0.25rem;",
+            ),
+            ui.p(
+                "Species: " + ", ".join(info["species_list"][:8])
+                + ("…" if len(info["species_list"]) > 8 else ""),
+                style="font-size:0.78rem;color:#555;",
+            ),
+        )
+
+
 
     @reactive.effect
     @reactive.event(input.sdm_fit_btn)
     def handle_fit_sdm():
         grid = generated_grid.get()
         cov  = sdm_covariates.get()
-        data = uploaded_data.get()
+
+        data_source = input.sdm_data_source() if hasattr(input, "sdm_data_source") else "csv"
+        if data_source == "dwca":
+            data = sdm_dwca_df.get()
+            auto_lat = "lat"
+            auto_lon = "lon"
+        else:
+            data = uploaded_data.get()
+            auto_lat = None
+            auto_lon = None
 
         if grid is None or cov is None or data is None:
             sdm_fit_message.set("⚠️ Please complete prerequisites: hex grid, covariates, and data upload.")
@@ -2912,8 +2985,8 @@ def server(input, output, session):
         response_type = input.sdm_response_type()
         method        = input.sdm_method()
         predictor_cols = list(input.sdm_predictors()) if input.sdm_predictors() else []
-        lat_col = (input.sdm_lat_col() or "lat").strip()
-        lon_col = (input.sdm_lon_col() or "lon").strip()
+        lat_col = (input.sdm_lat_col() or auto_lat or "lat").strip()
+        lon_col = (input.sdm_lon_col() or auto_lon or "lon").strip()
 
         if not response_col:
             sdm_fit_message.set("⚠️ Select a response variable.")

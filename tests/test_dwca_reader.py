@@ -534,3 +534,93 @@ class TestEdgeCases:
         df = dwca_reader.read_dwca(zip_path, value_column="abundance")
         assert "Species X" in df.columns
         assert df[df["Subzone ID"] == "E1"]["Species X"].iloc[0] == 5
+
+
+# ---------------------------------------------------------------------------
+# read_dwca_for_sdm
+# ---------------------------------------------------------------------------
+
+class TestReadDwcaForSdm:
+    """Tests for the SDM-specific DwC-A parser."""
+
+    def test_event_core_basic_shape(self, minimal_dwca):
+        df, info = dwca_reader.read_dwca_for_sdm(minimal_dwca, value="abundance")
+        assert "lat" in df.columns
+        assert "lon" in df.columns
+        assert "site_id" in df.columns
+        assert set(info["species_list"]) == {"Species A", "Species B", "Species C"}
+        assert info["n_sites"] == 3
+        assert info["n_species"] == 3
+
+    def test_event_core_abundance_values(self, minimal_dwca):
+        df, info = dwca_reader.read_dwca_for_sdm(minimal_dwca, value="abundance")
+        row_e1 = df[df["site_id"] == "E1"].iloc[0]
+        assert row_e1["Species A"] == 3.0
+        assert row_e1["Species B"] == 1.0
+        assert row_e1["Species C"] == 0.0
+
+    def test_event_core_presence_values(self, minimal_dwca):
+        df, info = dwca_reader.read_dwca_for_sdm(minimal_dwca, value="presence")
+        row_e2 = df[df["site_id"] == "E2"].iloc[0]
+        assert row_e2["Species A"] == 1.0
+        assert row_e2["Species C"] == 1.0
+        assert info["value_type"] == "presence"
+
+    def test_event_core_auto_detects_abundance(self, minimal_dwca):
+        df, info = dwca_reader.read_dwca_for_sdm(minimal_dwca, value="auto")
+        assert info["has_abundance"] is True
+        assert info["value_type"] == "abundance"
+
+    def test_event_core_coordinates(self, minimal_dwca):
+        df, info = dwca_reader.read_dwca_for_sdm(minimal_dwca)
+        row_e1 = df[df["site_id"] == "E1"].iloc[0]
+        assert abs(row_e1["lat"] - 55.0) < 0.01
+        assert abs(row_e1["lon"] - 21.0) < 0.01
+
+    def test_info_source_type(self, minimal_dwca):
+        _, info = dwca_reader.read_dwca_for_sdm(minimal_dwca)
+        assert info["source_type"] == "event_core"
+
+    def test_real_archive(self, dwca_path):
+        df, info = dwca_reader.read_dwca_for_sdm(dwca_path, value="abundance")
+        assert info["n_sites"] > 0
+        assert info["n_species"] > 0
+        assert "lat" in df.columns
+        assert "lon" in df.columns
+        # Coordinates should be in Mediterranean range
+        assert df["lat"].between(25, 50).all()
+        assert df["lon"].between(10, 40).all()
+
+    def test_occurrence_core_layout(self, tmp_path):
+        """Occurrence-core DwC-A (no event core) with lat/lon per record."""
+        meta_xml = """\
+<archive xmlns="http://rs.tdwg.org/dwc/text/">
+  <core encoding="UTF-8" fieldsTerminatedBy="\\t" ignoreHeaderLines="1" rowType="http://rs.tdwg.org/dwc/terms/Occurrence">
+    <files><location>occurrence.txt</location></files>
+    <id index="0" />
+    <field index="1" term="http://rs.tdwg.org/dwc/terms/eventID"/>
+    <field index="2" term="http://rs.tdwg.org/dwc/terms/decimalLatitude"/>
+    <field index="3" term="http://rs.tdwg.org/dwc/terms/decimalLongitude"/>
+    <field index="4" term="http://rs.tdwg.org/dwc/terms/scientificName"/>
+    <field index="5" term="http://rs.tdwg.org/dwc/terms/individualCount"/>
+  </core>
+</archive>"""
+        occ_txt = "id\teventID\tdecimalLatitude\tdecimalLongitude\tscientificName\tindividualCount\n"
+        occ_txt += "O1\tS1\t55.0\t21.0\tSpecies X\t4\n"
+        occ_txt += "O2\tS1\t55.0\t21.0\tSpecies Y\t2\n"
+        occ_txt += "O3\tS2\t55.1\t21.1\tSpecies X\t1\n"
+
+        zip_path = str(tmp_path / "occ_core.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            zf.writestr("meta.xml", meta_xml)
+            zf.writestr("eml.xml", "<eml/>")
+            zf.writestr("occurrence.txt", occ_txt)
+
+        df, info = dwca_reader.read_dwca_for_sdm(zip_path, value="abundance")
+        assert info["source_type"] == "occurrence_core"
+        assert info["n_sites"] == 2
+        assert "Species X" in df.columns
+        site_s1 = df[df["site_id"] == "S1"].iloc[0]
+        assert site_s1["Species X"] == 4.0
+        assert site_s1["Species Y"] == 2.0
+

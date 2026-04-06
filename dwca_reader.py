@@ -39,6 +39,7 @@ class DwCAMetadata:
     core_separator: str
     core_header_lines: int
     core_fields: dict[int, str]  # index -> term URI
+    core_row_type: str = ""      # rowType attribute of the <core> element
 
     extension_file: str | None = None
     ext_coreid_index: int = 0
@@ -120,6 +121,7 @@ def parse_meta_xml(zf: zipfile.ZipFile) -> DwCAMetadata:
         core_separator=_parse_separator(core_el.get("fieldsTerminatedBy")),
         core_header_lines=int(core_el.get("ignoreHeaderLines", "0")),
         core_fields=core_fields,
+        core_row_type=core_el.get("rowType", ""),
     )
 
     # --- Extension: find the Occurrence extension (archives may have multiple) ---
@@ -406,3 +408,254 @@ def get_dwca_summary(file_path: str) -> dict:
             summary["has_abundance"] = False
 
     return summary
+
+
+# ---------------------------------------------------------------------------
+# SDM-specific DwC-A reader
+# ---------------------------------------------------------------------------
+
+def _occurrence_status_to_numeric(series: pd.Series) -> pd.Series:
+    """Convert occurrenceStatus text values ('present'/'absent') to 1/0."""
+    mapping = {
+        "present": 1.0, "presence": 1.0, "1": 1.0, "true": 1.0, "yes": 1.0,
+        "absent": 0.0,  "absence": 0.0,  "0": 0.0, "false": 0.0, "no": 0.0,
+    }
+    return series.str.lower().str.strip().map(mapping).fillna(1.0)
+
+
+def read_dwca_for_sdm(
+    file_path: str,
+    value: str = "auto",
+) -> "tuple[pd.DataFrame, dict]":
+    """
+    Parse a DwC-A zip into a flat DataFrame suitable for Species Distribution
+    Modelling.
+
+    Supports two DwC-A layouts:
+
+    1. **Occurrence core** — lat/lon sit on each occurrence record directly.
+       Rows are grouped by ``eventID`` (or rounded lat/lon) to form sites.
+
+    2. **Event core + Occurrence extension** — lat/lon are in the event core,
+       species records are in the occurrence extension linked by ``eventID``.
+
+    Parameters
+    ----------
+    file_path : str
+        Path to the DwC-A zip file.
+    value : 'auto' | 'abundance' | 'presence'
+        - ``'abundance'``: use ``individualCount`` (numeric)
+        - ``'presence'``: binary 1/0 from ``occurrenceStatus``
+        - ``'auto'``: abundance if ``individualCount`` is present, else presence
+
+    Returns
+    -------
+    (df, info) where:
+
+    * **df** — DataFrame with columns ``lat``, ``lon``, ``site_id`` (str) and
+      one column per species (float).  Species names come from
+      ``scientificName`` (or ``verbatimIdentification``).
+    * **info** — dict with keys ``n_sites``, ``n_species``, ``species_list``,
+      ``has_abundance``, ``source_type``, ``value_type``.
+    """
+    _name_candidates = (
+        "scientificName", "verbatimIdentification", "taxonID", "species"
+    )
+
+    with zipfile.ZipFile(file_path, "r") as zf:
+        meta = parse_meta_xml(zf)
+        core_df = _read_txt(
+            zf, meta.core_file, meta.core_separator, meta.core_header_lines
+        )
+        core_df = _rename_columns(
+            core_df, meta.core_fields, meta.core_id_index, "id"
+        )
+
+        core_has_coords = (
+            "decimalLatitude" in core_df.columns
+            and "decimalLongitude" in core_df.columns
+        )
+        core_is_occurrence = "Occurrence" in meta.core_row_type
+
+        if meta.extension_file:
+            ext_df = _read_txt(
+                zf, meta.extension_file, meta.ext_separator, meta.ext_header_lines
+            )
+            ext_df = _rename_columns(
+                ext_df, meta.ext_fields, meta.ext_coreid_index, "coreid"
+            )
+        else:
+            ext_df = None
+
+    # ── Occurrence core (lat/lon in each record) ─────────────────────────────
+    if core_is_occurrence and core_has_coords:
+        source_type = "occurrence_core"
+        occ = core_df.copy()
+
+        occ["_lat"] = pd.to_numeric(occ["decimalLatitude"], errors="coerce")
+        occ["_lon"] = pd.to_numeric(occ["decimalLongitude"], errors="coerce")
+        occ = occ[occ["_lat"].notna() & occ["_lon"].notna()]
+        if occ.empty:
+            raise ValueError("Occurrence core has no valid coordinates.")
+
+        species_col = next((c for c in _name_candidates if c in occ.columns), None)
+        if species_col is None:
+            raise ValueError(
+                "Occurrence core has no species name column "
+                "(expected scientificName or verbatimIdentification)."
+            )
+
+        # Site grouper: eventID > rounded lat/lon
+        if "eventID" in occ.columns:
+            occ["_site_id"] = occ["eventID"].astype(str).str.strip()
+        else:
+            occ["_site_id"] = (
+                occ["_lat"].round(4).astype(str) + "_" + occ["_lon"].round(4).astype(str)
+            )
+
+        has_abundance = (
+            "individualCount" in occ.columns
+            and pd.to_numeric(occ["individualCount"], errors="coerce").notna().any()
+        )
+        use_abundance = (value == "abundance") or (value == "auto" and has_abundance)
+
+        if use_abundance and "individualCount" in occ.columns:
+            occ["_value"] = pd.to_numeric(occ["individualCount"], errors="coerce").fillna(1.0)
+        elif "occurrenceStatus" in occ.columns:
+            occ["_value"] = _occurrence_status_to_numeric(occ["occurrenceStatus"])
+        else:
+            occ["_value"] = 1.0
+
+        if value == "presence":
+            occ["_value"] = (occ["_value"] > 0).astype(float)
+
+        site_coords = (
+            occ.groupby("_site_id")[["_lat", "_lon"]]
+            .median()
+            .reset_index()
+            .rename(columns={"_site_id": "site_id", "_lat": "lat", "_lon": "lon"})
+        )
+
+        pivot = occ.pivot_table(
+            index="_site_id",
+            columns=species_col,
+            values="_value",
+            aggfunc="sum" if use_abundance else "max",
+            fill_value=0.0,
+        )
+        pivot.index.name = "site_id"
+        pivot = pivot.reset_index()
+        pivot.columns.name = None
+        df = site_coords.merge(pivot, on="site_id", how="inner")
+
+    # ── Event core + Occurrence extension ─────────────────────────────────────
+    else:
+        source_type = "event_core"
+        if ext_df is None:
+            raise ValueError(
+                "DwC-A has no coordinates in the core and no Occurrence "
+                "extension — cannot build SDM site data."
+            )
+        if not core_has_coords:
+            raise ValueError(
+                "Event core has no decimalLatitude/decimalLongitude columns."
+            )
+
+        events = core_df.copy()
+        occurrences = ext_df.copy()
+
+        event_id_col = "eventID" if "eventID" in events.columns else "id"
+        events["_lat"] = pd.to_numeric(
+            events.get("decimalLatitude", pd.Series(dtype=float)), errors="coerce"
+        )
+        events["_lon"] = pd.to_numeric(
+            events.get("decimalLongitude", pd.Series(dtype=float)), errors="coerce"
+        )
+
+        # Propagate parent-event coordinates to child events
+        if "parentEventID" in events.columns:
+            parent_lookup = (
+                events[events["_lat"].notna()]
+                .set_index(event_id_col)[["_lat", "_lon"]]
+            )
+            missing_mask = events["_lat"].isna()
+            for i in events[missing_mask].index:
+                pid = str(events.at[i, "parentEventID"]).strip()
+                if pid in parent_lookup.index:
+                    events.at[i, "_lat"] = parent_lookup.loc[pid, "_lat"]
+                    events.at[i, "_lon"] = parent_lookup.loc[pid, "_lon"]
+
+        events = events[events["_lat"].notna() & events["_lon"].notna()]
+        if events.empty:
+            raise ValueError("Event core has no valid coordinates.")
+
+        site_coords = events[[event_id_col, "_lat", "_lon"]].rename(
+            columns={event_id_col: "site_id", "_lat": "lat", "_lon": "lon"}
+        )
+
+        species_col = next(
+            (c for c in _name_candidates if c in occurrences.columns), None
+        )
+        if species_col is None:
+            raise ValueError(
+                "Occurrence extension has no species name column "
+                "(expected scientificName or verbatimIdentification)."
+            )
+
+        link_col = "eventID" if "eventID" in occurrences.columns else "coreid"
+        occurrences = occurrences[occurrences[species_col].str.strip() != ""]
+
+        has_abundance = (
+            "individualCount" in occurrences.columns
+            and pd.to_numeric(
+                occurrences["individualCount"], errors="coerce"
+            ).notna().any()
+        )
+        use_abundance = (value == "abundance") or (value == "auto" and has_abundance)
+
+        if use_abundance and "individualCount" in occurrences.columns:
+            occurrences["_value"] = pd.to_numeric(
+                occurrences["individualCount"], errors="coerce"
+            ).fillna(1.0)
+        elif "occurrenceStatus" in occurrences.columns:
+            occurrences["_value"] = _occurrence_status_to_numeric(
+                occurrences["occurrenceStatus"]
+            )
+        else:
+            occurrences["_value"] = 1.0
+
+        if value == "presence":
+            occurrences["_value"] = (occurrences["_value"] > 0).astype(float)
+
+        pivot = occurrences.pivot_table(
+            index=link_col,
+            columns=species_col,
+            values="_value",
+            aggfunc="sum" if use_abundance else "max",
+            fill_value=0.0,
+        )
+        pivot.index.name = "site_id"
+        pivot = pivot.reset_index()
+        pivot.columns.name = None
+        df = site_coords.merge(pivot, on="site_id", how="inner")
+
+    # ── Finalise ──────────────────────────────────────────────────────────────
+    species_cols = [c for c in df.columns if c not in ("lat", "lon", "site_id")]
+    df = df.rename(columns={c: c.strip() for c in species_cols})
+    species_cols = [c.strip() for c in species_cols]
+
+    value_type = "abundance" if use_abundance else "presence"
+
+    info: dict = {
+        "n_sites":      int(len(df)),
+        "n_species":    int(len(species_cols)),
+        "species_list": sorted(species_cols),
+        "has_abundance": bool(use_abundance),
+        "source_type":  source_type,
+        "value_type":   value_type,
+    }
+    logger.info(
+        "read_dwca_for_sdm: %d sites, %d species, source=%s, value=%s",
+        info["n_sites"], info["n_species"], source_type, value_type,
+    )
+    return df, info
