@@ -16,9 +16,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _LAND_MASK: gpd.GeoDataFrame | None = None
-_LAND_MASK_CACHE_PATH = Path(__file__).parent / "data" / "ne_50m_land.gpkg"
+_LAND_MASK_CACHE_PATH = Path(__file__).parent / "data" / "ne_10m_land.gpkg"
 _LAND_MASK_URL = (
-    "https://naturalearth.s3.amazonaws.com/50m_physical/ne_50m_land.zip"
+    "https://naturalearth.s3.amazonaws.com/10m_physical/ne_10m_land.zip"
 )
 
 

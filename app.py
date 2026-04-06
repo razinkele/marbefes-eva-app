@@ -496,13 +496,21 @@ def server(input, output, session):
         preset_key = input.hex_preset()
         resolution = HEX_PRESETS[preset_key]["resolution"]
         try:
-            grid = eva_hexgrid.generate_h3_grid(boundary, resolution)
+            # Generate raw grid first to get pre-clip count, then clip to sea
+            grid_raw = eva_hexgrid.generate_h3_grid(boundary, resolution, clip_to_sea=False)
+            grid = eva_hexgrid._clip_grid_to_sea(grid_raw, eva_hexgrid._load_land_mask()) \
+                if eva_hexgrid._load_land_mask() is not None else grid_raw
+            if len(grid) == 0:
+                ui.notification_show("All hexagons fall on land. Please draw a marine area.", type="error", duration=6)
+                return
         except ValueError as e:
             ui.notification_show(str(e), type="error", duration=6)
             return
+        land_removed = len(grid_raw) - len(grid)
+        clip_note = f" ({land_removed} land cells removed)" if land_removed else ""
         if len(grid) > 5000:
             ui.notification_show(
-                f"Warning: {len(grid)} cells generated. This may be slow. "
+                f"Warning: {len(grid)} cells generated{clip_note}. This may be slow. "
                 "Consider using a coarser resolution.",
                 type="warning", duration=8,
             )
@@ -577,7 +585,7 @@ def server(input, output, session):
         # Show hex grid
         if grid is not None:
             folium.GeoJson(
-                grid.__geo_interface__,
+                grid.to_json(),
                 style_function=lambda x: {
                     "fillColor": "#4da6ff",
                     "color": "#006994",
