@@ -628,6 +628,7 @@ app_ui = ui.page_navbar(
                             None,
                             choices={
                                 "eunis2007": "🌿 EUNIS 2007 L3 habitat (EuSEAMAP 2025) — for PA",
+                                "eunis2019": "🌿 EUNIS 2019 L3 habitat (EuSEAMAP 2025)",
                                 "substrate": "🪨 Seabed substrate type (rock/sand/mud/gravel)",
                                 "energy":    "🌊 Energy class (wave/current exposure)",
                                 "biozone":   "🔵 Biological zone (infralittoral/circalittoral/…)",

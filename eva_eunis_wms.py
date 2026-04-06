@@ -37,7 +37,7 @@ EUSM_WMS_URL = "https://ows.emodnet-seabedhabitats.eu/geoserver/emodnet_view/wms
 # Exception: eusm2025_subs_full uses simple polygon fill (few colours, no AA issue).
 #
 # Coverage notes (verified via WMS tile inspection):
-#   eunis2007, substrate, biozone, msfd: pan-European incl. Mediterranean
+#   eunis2007, eunis2019, substrate, biozone, msfd: pan-European incl. Mediterranean
 #   energy (ene): Atlantic/North Sea/Baltic only — no Mediterranean data
 #   helcom: Baltic Sea only
 EUSM_LAYERS: dict = {
@@ -46,6 +46,13 @@ EUSM_LAYERS: dict = {
         "col": "dominant_EUNIS",
         "name_col": "dominant_EUNIS_name",
         "label": "EUNIS 2007 L3 Habitat",
+        "coverage": "pan-European",
+    },
+    "eunis2019": {
+        "wms_layer": "eusm2025_eunis2019_400",
+        "col": "dominant_EUNIS2019",
+        "name_col": "dominant_EUNIS2019_name",
+        "label": "EUNIS 2019 L3 Habitat",
         "coverage": "pan-European",
     },
     "substrate": {

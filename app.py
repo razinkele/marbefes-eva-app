@@ -410,12 +410,13 @@ def server(input, output, session):
 
     # Column names in sdm_covariates GDF → human label mapping
     _SDM_MAP_COLS = {
-        "dominant_EUNIS":  "EUNIS L3 Habitat",
-        "substrate_type":  "Seabed Substrate",
-        "energy_class":    "Energy Class",
-        "bio_zone":        "Biological Zone",
-        "helcom_class":    "HELCOM HUB Class",
-        "depth_m":         "Water Depth (m)",
+        "dominant_EUNIS":      "EUNIS 2007 L3 Habitat",
+        "dominant_EUNIS2019":  "EUNIS 2019 L3 Habitat",
+        "substrate_type":      "Seabed Substrate",
+        "energy_class":        "Energy Class",
+        "bio_zone":            "Biological Zone",
+        "helcom_class":        "HELCOM HUB Class",
+        "depth_m":             "Water Depth (m)",
     }
 
     def _covariate_choices() -> dict:

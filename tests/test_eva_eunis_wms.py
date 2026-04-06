@@ -391,5 +391,41 @@ class TestNearestLegendColor(unittest.TestCase):
         self.assertEqual(code, "A5.27")
 
 
+class TestEunis2019Config(unittest.TestCase):
+    """Verify EUNIS 2019 layer is correctly configured in EUSM_LAYERS."""
+
+    def test_eunis2019_exists_in_layers(self):
+        self.assertIn("eunis2019", eva_eunis_wms.EUSM_LAYERS)
+
+    def test_eunis2019_uses_400_variant(self):
+        wms = eva_eunis_wms.EUSM_LAYERS["eunis2019"]["wms_layer"]
+        self.assertIn("_400", wms)
+        self.assertEqual(wms, "eusm2025_eunis2019_400")
+
+    def test_eunis2019_has_correct_columns(self):
+        cfg = eva_eunis_wms.EUSM_LAYERS["eunis2019"]
+        self.assertEqual(cfg["col"], "dominant_EUNIS2019")
+        self.assertEqual(cfg["name_col"], "dominant_EUNIS2019_name")
+
+    def test_eunis2019_has_coverage_note(self):
+        cfg = eva_eunis_wms.EUSM_LAYERS["eunis2019"]
+        self.assertIn("coverage", cfg)
+        self.assertIn("pan-European", cfg["coverage"])
+
+    def test_eunis2019_legend_filter_regex(self):
+        """EUNIS 2019 uses all2019dl2 attribute: [all2019dl2 = 'MB1: Infralittoral rock']"""
+        import re
+        sample = "[all2019dl2 = 'MB3: Infralittoral coarse sediment']"
+        m = re.search(r"= '([^']+)'", sample)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(1), "MB3: Infralittoral coarse sediment")
+
+    def test_all_layers_have_required_keys(self):
+        required = {"wms_layer", "col", "name_col", "label", "coverage"}
+        for key, cfg in eva_eunis_wms.EUSM_LAYERS.items():
+            missing = required - set(cfg.keys())
+            self.assertFalse(missing, f"Layer '{key}' missing keys: {missing}")
+
+
 if __name__ == "__main__":
     unittest.main()
