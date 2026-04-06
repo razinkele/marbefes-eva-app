@@ -594,6 +594,84 @@ app_ui = ui.page_navbar(
                         style="font-size: 0.78rem; color: #6c757d; margin-top: 0.6rem;",
                     ),
                 ),
+                ui.hr(),
+                ui.div(
+                    ui.h5(
+                        "4. Annotate with EUNIS Habitats",
+                        style="color: #006994; font-weight: 600; margin-bottom: 0.5rem;",
+                    ),
+                    ui.p(
+                        "Assign EUNIS Level 3 habitat codes to each hexagon. "
+                        "Required for Physical Accounts (ecosystem extent & condition). "
+                        "Optional but recommended for comprehensive EVA.",
+                        style="font-size: 0.8rem; color: #6c757d; margin-bottom: 0.75rem;",
+                    ),
+                    ui.input_radio_buttons(
+                        "eunis_source",
+                        "Habitat data source:",
+                        choices={
+                            "auto": "EMODnet EuSEAMAP 2025 (automatic, online)",
+                            "upload": "Upload custom habitat map",
+                        },
+                        selected="auto",
+                    ),
+                    ui.panel_conditional(
+                        "input.eunis_source === 'auto'",
+                        ui.div(
+                            ui.HTML(
+                                "<b>📡 EMODnet EuSEAMAP 2025</b> — EUNIS 2007 L3 classification, "
+                                "pan-European seabed habitat layer from EMODnet Seabed Habitats. "
+                                "Hexagons are annotated by sampling the WMS at their centroids. "
+                                "Requires internet access. Near-shore hexagons may lack data."
+                            ),
+                            style=(
+                                "font-size: 0.78rem; color: #555; background: #f0f7ff; "
+                                "border-left: 3px solid #006994; border-radius: 4px; "
+                                "padding: 0.5rem 0.6rem; margin-bottom: 0.6rem;"
+                            ),
+                        ),
+                        ui.tooltip(
+                            ui.input_action_button(
+                                "fetch_eunis",
+                                "🌊 Fetch EUNIS from EuSEAMAP",
+                                class_="btn-info",
+                                style="width: 100%; margin-bottom: 0.4rem; color: white;",
+                            ),
+                            "Downloads EuSEAMAP 2025 habitat data from EMODnet WMS and assigns "
+                            "dominant EUNIS Level 3 codes to each hexagon based on centroid sampling. "
+                            "A grid must be generated first (Step 3).",
+                            placement="right",
+                        ),
+                    ),
+                    ui.panel_conditional(
+                        "input.eunis_source === 'upload'",
+                        ui.input_file(
+                            "upload_habitat_source",
+                            "Upload habitat polygon layer:",
+                            accept=[".gpkg", ".geojson", ".json", ".zip"],
+                            multiple=False,
+                            button_label="Browse...",
+                        ),
+                        ui.p(
+                            "GeoPackage (.gpkg), GeoJSON, or zipped Shapefile/FileGDB. "
+                            "Layer must contain an 'EUNIScomb' column with EUNIS codes. "
+                            "Any CRS is accepted (auto-reprojected).",
+                            style="font-size: 0.78rem; color: #6c757d; margin-top: 0.3rem;",
+                        ),
+                    ),
+                    ui.output_ui("eunis_grid_status"),
+                    ui.tooltip(
+                        ui.download_button(
+                            "download_eunis_overlay",
+                            "Download EUNIS Overlay (.gpkg)",
+                            class_="btn-outline-secondary",
+                            style="width: 100%; margin-top: 0.4rem;",
+                        ),
+                        "Download the EUNIS habitat annotation as a GeoPackage file "
+                        "for use in GIS software or as input to Physical Accounts.",
+                        placement="right",
+                    ),
+                ),
                 width=380,
             ),
             ui.div(

@@ -28,6 +28,7 @@ import pa_export
 import eva_visualizations
 import eva_map
 import eva_hexgrid
+import eva_eunis_wms
 import dwca_reader
 from eva_ui import app_ui, get_aq_guide_html
 
@@ -2233,6 +2234,175 @@ def server(input, output, session):
         except Exception as e:
             logger.error("EUNIS upload error: %s", e)
             ui.notification_show(f"Error loading EUNIS overlay: {e}", type="error")
+
+    # -----------------------------------------------------------------
+    # Grid Setup → Section 4: EUNIS annotation from WMS or custom file
+    # -----------------------------------------------------------------
+
+    @reactive.Effect
+    @reactive.event(input.fetch_eunis)
+    def handle_fetch_eunis():
+        grid = generated_grid.get()
+        if grid is None:
+            ui.notification_show(
+                "Generate a grid first (Step 3) before fetching EUNIS data.",
+                type="warning", duration=5,
+            )
+            return
+        ui.notification_show(
+            f"Fetching EuSEAMAP 2025 habitat data for {len(grid)} hexagons… "
+            "This may take a minute.",
+            type="message", duration=8,
+        )
+        try:
+            overlay = eva_eunis_wms.fetch_eunis_for_grid(grid)
+        except Exception as exc:
+            logger.error("EuSEAMAP WMS error: %s", exc)
+            ui.notification_show(
+                f"Could not fetch EuSEAMAP data: {exc}. "
+                "Check your internet connection or try uploading a custom habitat map.",
+                type="error", duration=10,
+            )
+            return
+        eunis_overlay.set(overlay)
+        _apply_eunis_overlay(overlay)
+        n_with = int(overlay["dominant_EUNIS"].notna().sum())
+        n_types = int(overlay["dominant_EUNIS"].nunique())
+        ui.notification_show(
+            f"✅ EuSEAMAP 2025: {n_types} EUNIS habitat types assigned to "
+            f"{n_with}/{len(overlay)} hexagons.",
+            type="message", duration=7,
+        )
+
+    @reactive.Effect
+    @reactive.event(input.upload_habitat_source)
+    def handle_upload_habitat_source():
+        file_info = input.upload_habitat_source()
+        if file_info is None or len(file_info) == 0:
+            return
+        grid = generated_grid.get()
+        if grid is None:
+            ui.notification_show(
+                "Generate a grid first (Step 3) before uploading a habitat map.",
+                type="warning", duration=5,
+            )
+            return
+        file_name = file_info[0].get("name", "").lower()
+        allowed_exts = (".gpkg", ".geojson", ".json", ".zip")
+        if not any(file_name.endswith(ext) for ext in allowed_exts):
+            ui.notification_show(
+                "Unsupported file type. Please upload GeoPackage (.gpkg), GeoJSON, or zipped Shapefile/GDB.",
+                type="error", duration=8,
+            )
+            return
+        ui.notification_show(
+            "Reading habitat file and computing EUNIS overlay…", type="message", duration=5,
+        )
+        try:
+            habitat_gdf = _read_habitat_file(file_info[0]["datapath"], file_name)
+        except Exception as exc:
+            logger.error("Habitat file read error: %s", exc)
+            ui.notification_show(f"Could not read habitat file: {exc}", type="error", duration=10)
+            return
+        try:
+            eunis_col = "EUNIScomb"
+            name_col = "EUNIScombD" if "EUNIScombD" in habitat_gdf.columns else None
+            overlay = eva_eunis_wms.compute_overlay_from_file(grid, habitat_gdf, eunis_col, name_col)
+        except Exception as exc:
+            logger.error("Habitat overlay error: %s", exc)
+            ui.notification_show(f"Error computing EUNIS overlay: {exc}", type="error", duration=10)
+            return
+        eunis_overlay.set(overlay)
+        _apply_eunis_overlay(overlay)
+        n_with = int(overlay["dominant_EUNIS"].notna().sum())
+        n_types = int(overlay["dominant_EUNIS"].nunique())
+        ui.notification_show(
+            f"✅ Habitat overlay: {n_types} EUNIS types assigned to {n_with}/{len(overlay)} hexagons.",
+            type="message", duration=7,
+        )
+
+    def _read_habitat_file(path: str, file_name: str) -> gpd.GeoDataFrame:
+        """Read a user-uploaded habitat polygon file (GPKG, GeoJSON, or ZIP)."""
+        import zipfile, tempfile, shutil, fiona
+        if file_name.endswith(".zip"):
+            tmpdir = tempfile.mkdtemp()
+            try:
+                with zipfile.ZipFile(path) as z:
+                    z.extractall(tmpdir)
+                # Find GPKG, GeoJSON, SHP, or GDB inside the zip
+                for root, dirs, files in os.walk(tmpdir):
+                    for fn in files:
+                        fp = os.path.join(root, fn)
+                        if fn.lower().endswith((".gpkg", ".geojson", ".json", ".shp")):
+                            return gpd.read_file(fp)
+                    for d in dirs:
+                        if d.lower().endswith(".gdb"):
+                            gdb_path = os.path.join(root, d)
+                            layers = fiona.listlayers(gdb_path)
+                            # Prefer layer with "eunis" or "euseamap" in name
+                            layer = next(
+                                (l for l in layers if "eunis" in l.lower() or "eusea" in l.lower()),
+                                layers[0],
+                            )
+                            return gpd.read_file(gdb_path, layer=layer)
+                raise FileNotFoundError("No recognised vector layer found inside ZIP.")
+            finally:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+        return gpd.read_file(path)
+
+    def _apply_eunis_overlay(overlay: gpd.GeoDataFrame):
+        """Apply EUNIS overlay to PA habitat assignments."""
+        has_eunis = overlay["dominant_EUNIS"].notna()
+        assignments = (
+            overlay.loc[has_eunis]
+            .set_index("Subzone_ID")["dominant_EUNIS"]
+            .astype(str)
+            .to_dict()
+        )
+        pa_habitat_assignments.set(assignments)
+        suggestions = eunis_data.suggest_feature_classifications(overlay, [])
+        hfs_count = suggestions.get("_hfs_subzone_count", 0)
+        if hfs_count > 0:
+            ui.notification_show(
+                f"Note: {hfs_count} subzones have reef/biogenic habitats (EUNIS A3/A4). "
+                "Consider classifying relevant species as HFS/BH in the EC Features tab.",
+                type="message", duration=8,
+            )
+
+    @output
+    @render.ui
+    def eunis_grid_status():
+        overlay = eunis_overlay.get()
+        grid = generated_grid.get()
+        if grid is None:
+            return ui.p(
+                "Generate a grid first.",
+                style="font-size: 0.8rem; color: #6c757d; margin-top: 0.4rem;",
+            )
+        if overlay is None:
+            return ui.p(
+                "No EUNIS annotation yet. Fetch from EuSEAMAP or upload a habitat map.",
+                style="font-size: 0.8rem; color: #6c757d; margin-top: 0.4rem;",
+            )
+        n_with = int(overlay["dominant_EUNIS"].notna().sum())
+        n_types = int(overlay["dominant_EUNIS"].nunique())
+        n_total = len(overlay)
+        pct = round(n_with / n_total * 100) if n_total else 0
+        return ui.div(
+            ui.p(
+                f"✅ {n_types} EUNIS types · {n_with}/{n_total} hexagons annotated ({pct}%)",
+                style="color: #28a745; font-weight: 600; margin-top: 0.4rem; font-size: 0.85rem;",
+            ),
+        )
+
+    @render.download(filename="eunis_overlay.gpkg")
+    def download_eunis_overlay():
+        overlay = eunis_overlay.get()
+        if overlay is None:
+            return
+        with io.BytesIO() as buf:
+            overlay.to_file(buf, driver="GPKG")
+            yield buf.getvalue()
 
     @output
     @render.ui
