@@ -905,6 +905,13 @@ app_ui = ui.page_fluid(
                     ui.tags.a(
                         {"class": "nav-link",
                          "href": "#",
+                         "data-nav-id": "nav_sdm"},
+                        ui.tags.i(class_="bi bi-graph-up-arrow"),
+                        ui.tags.span("Species Distribution")
+                    ),
+                    ui.tags.a(
+                        {"class": "nav-link",
+                         "href": "#",
                          "data-nav-id": "nav_data"},
                         ui.tags.i(class_="bi bi-upload"),
                         ui.tags.span("Data Input")
@@ -950,13 +957,6 @@ app_ui = ui.page_fluid(
                          "data-nav-id": "nav_pa"},
                         ui.tags.i(class_="bi bi-receipt"),
                         ui.tags.span("Physical Accounts")
-                    ),
-                    ui.tags.a(
-                        {"class": "nav-link",
-                         "href": "#",
-                         "data-nav-id": "nav_sdm"},
-                        ui.tags.i(class_="bi bi-graph-up-arrow"),
-                        ui.tags.span("Species Distribution")
                     ),
                     ui.tags.a(
                         {"class": "nav-link",
