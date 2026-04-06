@@ -3,6 +3,28 @@
 All notable changes to the MARBEFES EVA application are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.7.0] - 2026-04-06 "SDM Intelligence"
+
+### Added
+- **SDM: Darwin Core Archive (DwC-A) upload** — upload standardised biodiversity sampling data directly into the Species Distribution Modelling workflow; supports both Occurrence-core and Event-core + Occurrence-extension layouts; handles presence/absence, abundance, and auto-detect modes
+- **SDM: Sampling site map overlay** — loaded sampling sites appear as colour-coded CircleMarkers on the SDM map (pre-fit centred on data, post-fit overlaid on prediction grid); tooltip shows site ID and response value
+- **SDM: Hex grid wireframe overlay** — the analysis grid is drawn as a semi-transparent blue wireframe on all SDM map views (prediction, uncertainty) with Subzone ID tooltips
+- **SDM: 📋 Data Analysis tab** — automatic pre-modelling data analysis showing response statistics (n sites, min/max/mean/SD, zero count, prevalence), histogram sparkline, method recommendation with reasoning, and categorical predictor notes; placed as the first tab in the SDM panel
+- **SDM: Auto response-type detection** — binary/count/continuous radio button updates automatically when sampling data and response column are selected
+- **SDM: Method recommendation engine** — `analyse_sampling_data()` selects optimal SDM method based on sample size, data type, zero-inflation, covariate availability, and prevalence
+
+### Fixed
+- **SDM: Categorical encoding consistency** — `prepare_features()` now uses `drop_first=False` and returns `feat_names`; `predict_grid()` aligns grid dummies to training columns using `reindex`, preventing silent shape mismatches when EUNIS categories differ between training data and prediction grid
+- **CMEMS: Input validation order** — empty-layers and missing-credentials checks now happen before the `copernicusmarine` import attempt; validation tests pass correctly even when the library is not installed locally
+- **CMEMS: zarr v3 / cupy crash** — pinned `zarr<3.0` in `requirements.txt` to prevent zarr v3 pulling in cupy which crashes on CPU-only servers with `NoneType` path error
+
+### Changed
+- **UI:** Species Distribution panel moved before Data Input in the sidebar menu for more logical workflow ordering
+
+### Tests
+- Added 9 DwC-A SDM tests (`TestReadDwcaForSdm`) covering Event-core, Occurrence-core, abundance/presence/auto modes, coordinate extraction, and info metadata
+- All 321 tests now pass (0 failures) with `pykrige` and `pygam` installed; 8 skipped (optional heavy deps)
+
 ## [3.5.1] - 2026-03-18 "Test Hardening"
 
 ### Added

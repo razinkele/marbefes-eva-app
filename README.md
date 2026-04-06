@@ -1,10 +1,10 @@
-# MARBEFES EVA v3.6.0
+# MARBEFES EVA v3.7.0
 
 Ecological Value Assessment (EVA) web application for the [MARBEFES](https://marbefes.eu/) project, funded by the European Union's Horizon Europe Research Programme.
 
 EVA is a framework for evaluating the ecological value of marine areas by scoring ecosystem components (species or habitats) across spatial subzones using 15 standardised Assessment Questions (AQ1-AQ15), producing an Ecological Value (EV) score on a 0-5 scale.
 
-**Current version:** 3.6.0 "Production Ready" (2026-03-18) | [Changelog](CHANGELOG.md) | [User Manual](docs/USER_MANUAL.md)
+**Current version:** 3.7.0 "SDM Intelligence" (2026-04-06) | [Changelog](CHANGELOG.md) | [User Manual](docs/USER_MANUAL.md)
 
 ## Features
 
@@ -23,6 +23,13 @@ EVA is a framework for evaluating the ecological value of marine areas by scorin
   - Supply Table for societal benefits (configurable, 5 defaults)
   - Habitat type categorical map visualization
   - Excel export (standalone or combined with EVA)
+- **Species Distribution Modelling (SDM)** - Model and predict species distributions across the study area
+  - Upload sampling sites as CSV or Darwin Core Archive (DwC-A)
+  - Copernicus Marine (CMEMS) and EUNIS 2019 habitat covariates
+  - Methods: IDW, GAM, Ordinary Kriging, Regression Kriging, Random Forest, XGBoost, LightGBM, Gaussian Process, Ensemble
+  - 📋 Data Analysis tab — automatic statistics, method recommendation, and categorical variable guidance
+  - Interactive prediction and uncertainty maps with hex grid and sampling site overlays
+  - Variogram plots and feature importance diagnostics
 - **Export** - Download results as Excel or CSV
 
 ## Quick Start
@@ -39,12 +46,13 @@ Open http://localhost:8790 in your browser.
 
 ## Usage
 
-1. Go to **Data Input** and upload a CSV file (rows = subzones, columns = features)
-2. Optionally upload a spatial grid file (GeoJSON/Shapefile/GeoPackage) with matching `Subzone ID` attributes
-3. Configure features in the **EC Features** tab
-4. View calculated AQ scores and EV in the **AQ + EV Results** tab
-5. Explore aggregated results in the **Total EV** tab
-6. See spatial results on the **Map** tab
+1. Go to **Species Distribution** to model and predict species distributions from sampling data (CSV or DwC-A)
+2. Go to **Data Input** and upload a CSV file (rows = subzones, columns = features)
+3. Optionally upload a spatial grid file (GeoJSON/Shapefile/GeoPackage) with matching `Subzone ID` attributes
+4. Configure features in the **EC Features** tab
+5. View calculated AQ scores and EV in the **AQ + EV Results** tab
+6. Explore aggregated results in the **Total EV** tab
+7. See spatial results on the **Map** tab
 
 ## Data Format
 
@@ -76,15 +84,22 @@ A sample grid is provided at `data/test_grid.geojson` with 10 hexagonal cells ne
 app.py                  # Main Shiny application (UI + server)
 eva_config.py           # EVA constants and metadata
 version.py              # Centralized version management
-eva_config.py           # EVA constants and metadata
 eva_calculations.py     # EVA calculation functions
 eva_export.py           # EVA Excel export
+eva_map.py              # GIS map helpers
+eva_ui.py               # UI component definitions
+eva_sdm.py              # Species Distribution Modelling engine
+eva_cmems.py            # Copernicus Marine covariate fetcher
+eva_hexgrid.py          # Hexagonal grid generation
+eva_eunis_wms.py        # EUNIS WMS covariate extraction
+eva_visualizations.py   # Plotly chart helpers
+dwca_reader.py          # Darwin Core Archive parser
 pa_config.py            # Physical Accounts constants and EUNIS reference
 pa_calculations.py      # Physical Accounts calculation functions
 pa_export.py            # Physical Accounts Excel export
 requirements.txt        # Python dependencies
 CHANGELOG.md            # Release history
-tests/                  # Unit tests
+tests/                  # Unit tests (321 passing)
 data/
   test_grid.geojson     # Sample hexagonal grid for testing
   sample_data.csv       # Sample CSV dataset
@@ -100,7 +115,9 @@ docs/
 ## Requirements
 
 - Python 3.10+
-- Dependencies: shiny, pandas, numpy, plotly, openpyxl, uvicorn, geopandas, folium
+- Core: `shiny`, `pandas`, `numpy`, `plotly`, `openpyxl`, `geopandas`, `folium`
+- SDM: `scikit-learn`, `pygam`, `pykrige`, `xgboost`, `lightgbm`, `scipy`
+- CMEMS: `copernicusmarine`, `xarray` (server-side; free registration at marine.copernicus.eu)
 
 ## Reference
 
