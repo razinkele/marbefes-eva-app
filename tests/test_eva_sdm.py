@@ -416,6 +416,104 @@ class TestVariogramPlot:
 
 
 # ---------------------------------------------------------------------------
+# XGBoost
+# ---------------------------------------------------------------------------
+
+class TestXGBoost:
+    """XGBoost tests — skipped if xgboost is not installed."""
+
+    @pytest.fixture(autouse=True)
+    def require_xgboost(self):
+        pytest.importorskip("xgboost")
+
+    def test_fit_continuous(self):
+        rng = np.random.default_rng(30)
+        X = rng.uniform(0, 5, (40, 2))
+        y = X[:, 0] + rng.normal(0, 0.2, 40)
+        model = eva_sdm.fit_xgboost(X, y, response_type="continuous", n_estimators=50)
+        assert hasattr(model, "feature_importances_")
+
+    def test_fit_binary(self):
+        rng = np.random.default_rng(31)
+        X = rng.uniform(0, 5, (40, 2))
+        y = (rng.uniform(size=40) > 0.5).astype(int)
+        model = eva_sdm.fit_xgboost(X, y, response_type="binary", n_estimators=50)
+        assert hasattr(model, "predict_proba")
+
+    def test_predict_grid_xgb(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(20)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        X, y, _ = eva_sdm.prepare_features(sites_cov, ["depth_m", "sst_mean_c"], "abundance")
+        model = eva_sdm.fit_xgboost(X, y, n_estimators=50)
+        preds, unc = eva_sdm.predict_grid(
+            grid, ["depth_m", "sst_mean_c"], xgb_model=model, method="xgboost"
+        )
+        assert len(preds) == len(grid)
+        assert unc is None  # XGBoost does not produce uncertainty
+
+    def test_diagnostics_feature_importances_xgb(self):
+        rng = np.random.default_rng(32)
+        X = rng.uniform(0, 5, (40, 2))
+        y = X[:, 0] + rng.normal(0, 0.2, 40)
+        model = eva_sdm.fit_xgboost(X, y, n_estimators=50)
+        diag = eva_sdm.model_diagnostics(
+            y, model.predict(X), feature_names=["f0", "f1"], xgb_model=model
+        )
+        assert "feature_importances" in diag
+        assert diag.get("feature_importance_model") == "XGBoost"
+
+
+# ---------------------------------------------------------------------------
+# LightGBM
+# ---------------------------------------------------------------------------
+
+class TestLightGBM:
+    """LightGBM tests — skipped if lightgbm is not installed."""
+
+    @pytest.fixture(autouse=True)
+    def require_lightgbm(self):
+        pytest.importorskip("lightgbm")
+
+    def test_fit_continuous(self):
+        rng = np.random.default_rng(40)
+        X = rng.uniform(0, 5, (40, 2))
+        y = X[:, 0] + rng.normal(0, 0.2, 40)
+        model = eva_sdm.fit_lightgbm(X, y, response_type="continuous", n_estimators=50)
+        assert hasattr(model, "feature_importances_")
+
+    def test_fit_binary(self):
+        rng = np.random.default_rng(41)
+        X = rng.uniform(0, 5, (40, 2))
+        y = (rng.uniform(size=40) > 0.5).astype(int)
+        model = eva_sdm.fit_lightgbm(X, y, response_type="binary", n_estimators=50)
+        assert hasattr(model, "predict_proba")
+
+    def test_predict_grid_lgbm(self):
+        grid = _make_hex_grid(20)
+        sites = _make_sites(20)
+        sites_cov = eva_sdm.extract_covariates_at_sites(sites, grid)
+        X, y, _ = eva_sdm.prepare_features(sites_cov, ["depth_m", "sst_mean_c"], "abundance")
+        model = eva_sdm.fit_lightgbm(X, y, n_estimators=50)
+        preds, unc = eva_sdm.predict_grid(
+            grid, ["depth_m", "sst_mean_c"], lgbm_model=model, method="lightgbm"
+        )
+        assert len(preds) == len(grid)
+        assert unc is None  # LightGBM does not produce uncertainty
+
+    def test_diagnostics_feature_importances_lgbm(self):
+        rng = np.random.default_rng(42)
+        X = rng.uniform(0, 5, (40, 2))
+        y = X[:, 0] + rng.normal(0, 0.2, 40)
+        model = eva_sdm.fit_lightgbm(X, y, n_estimators=50)
+        diag = eva_sdm.model_diagnostics(
+            y, model.predict(X), feature_names=["f0", "f1"], lgbm_model=model
+        )
+        assert "feature_importances" in diag
+        assert diag.get("feature_importance_model") == "LightGBM"
+
+
+# ---------------------------------------------------------------------------
 # Feature importances HTML
 # ---------------------------------------------------------------------------
 

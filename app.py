@@ -2950,12 +2950,15 @@ def server(input, output, session):
             variogram_model = getattr(input, "sdm_variogram_model", lambda: "spherical")() or "spherical"
 
             gam_model = idw_model = kriging_model = rf_model = gp_model = rk_model = None
+            xgb_model = lgbm_model = None
 
             # 3. Fit models based on selected method
             needs_gam     = method in ("gam", "ensemble")
             needs_idw     = method in ("idw", "ensemble")
             needs_kriging = method in ("kriging", "ensemble")
             needs_rf      = method in ("rf", "ensemble")
+            needs_xgb     = method in ("xgboost",)
+            needs_lgbm    = method in ("lightgbm",)
             needs_gp      = method in ("gp",)
             needs_rk      = method in ("regression_kriging",)
 
@@ -2981,6 +2984,18 @@ def server(input, output, session):
             if needs_rf:
                 sdm_fit_message.set(f"⏳ Fitting Random Forest ({rf_trees} trees)…")
                 rf_model = eva_sdm.fit_random_forest(
+                    X, y, response_type=response_type, n_estimators=rf_trees
+                )
+
+            if needs_xgb:
+                sdm_fit_message.set("⏳ Fitting XGBoost…")
+                xgb_model = eva_sdm.fit_xgboost(
+                    X, y, response_type=response_type, n_estimators=rf_trees
+                )
+
+            if needs_lgbm:
+                sdm_fit_message.set("⏳ Fitting LightGBM…")
+                lgbm_model = eva_sdm.fit_lightgbm(
                     X, y, response_type=response_type, n_estimators=rf_trees
                 )
 
@@ -3016,6 +3031,7 @@ def server(input, output, session):
                 cov, predictor_cols_available,
                 gam_model=gam_model, idw_model=idw_model,
                 kriging_model=kriging_model, rf_model=rf_model,
+                xgb_model=xgb_model, lgbm_model=lgbm_model,
                 gp_model=gp_model, rk_model=rk_model,
                 method=method,
                 ensemble_weights=ens_weights,
@@ -3024,13 +3040,37 @@ def server(input, output, session):
             )
 
             # 5. Diagnostics — in-sample predictions at sites
-            primary = gam_model or rf_model or gp_model
+            primary = gam_model or rf_model or xgb_model or lgbm_model or gp_model
             if primary is not None:
                 if gp_model is not None:
                     from sklearn.preprocessing import StandardScaler
                     scaler = getattr(gp_model, "_eva_scaler", None)
                     Xs = scaler.transform(X) if scaler else X
                     y_pred_sites = gp_model.predict(Xs)
+                elif xgb_model is not None:
+                    import warnings as _w
+                    with _w.catch_warnings():
+                        _w.simplefilter("ignore")
+                        try:
+                            from xgboost import XGBClassifier
+                            if isinstance(xgb_model, XGBClassifier):
+                                y_pred_sites = xgb_model.predict_proba(X)[:, 1]
+                            else:
+                                y_pred_sites = xgb_model.predict(X)
+                        except ImportError:
+                            y_pred_sites = xgb_model.predict(X)
+                elif lgbm_model is not None:
+                    import warnings as _w
+                    with _w.catch_warnings():
+                        _w.simplefilter("ignore")
+                        try:
+                            from lightgbm import LGBMClassifier
+                            if isinstance(lgbm_model, LGBMClassifier):
+                                y_pred_sites = lgbm_model.predict_proba(X)[:, 1]
+                            else:
+                                y_pred_sites = lgbm_model.predict(X)
+                        except ImportError:
+                            y_pred_sites = lgbm_model.predict(X)
                 elif rf_model is not None:
                     from sklearn.ensemble import RandomForestClassifier
                     if isinstance(rf_model, RandomForestClassifier):
@@ -3058,6 +3098,7 @@ def server(input, output, session):
             diag = eva_sdm.model_diagnostics(
                 y, y_pred_sites, response_type, feat_names,
                 gam_model=gam_model, rf_model=rf_model,
+                xgb_model=xgb_model, lgbm_model=lgbm_model,
             )
 
             sdm_results.set({
@@ -3065,6 +3106,8 @@ def server(input, output, session):
                 "idw_model":      idw_model,
                 "kriging_model":  kriging_model,
                 "rf_model":       rf_model,
+                "xgb_model":      xgb_model,
+                "lgbm_model":     lgbm_model,
                 "gp_model":       gp_model,
                 "rk_model":       rk_model,
                 "predictions":    predictions,
@@ -3162,6 +3205,8 @@ def server(input, output, session):
             "gam": "GAM", "idw": "IDW",
             "kriging": "Ordinary Kriging",
             "rf": "Random Forest",
+            "xgboost": "XGBoost",
+            "lightgbm": "LightGBM",
             "gp": "Gaussian Process",
             "regression_kriging": "Regression Kriging (RF + OK)",
             "ensemble": "Ensemble",

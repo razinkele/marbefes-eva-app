@@ -1937,8 +1937,10 @@ app_ui = ui.page_fluid(
                     choices={
                         "ensemble":          "🔀 Ensemble (recommended)",
                         "regression_kriging":"⭐ Regression Kriging (RF + OK)",
-                        "kriging":           "🌐 Ordinary Kriging",
+                        "xgboost":           "⚡ XGBoost",
+                        "lightgbm":          "💡 LightGBM",
                         "rf":                "🌲 Random Forest",
+                        "kriging":           "🌐 Ordinary Kriging",
                         "gp":                "🔮 Gaussian Process",
                         "gam":               "📈 GAM only",
                         "idw":               "📍 IDW only",

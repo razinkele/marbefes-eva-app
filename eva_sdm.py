@@ -53,7 +53,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 ResponseType = Literal["continuous", "binary", "count"]
 MethodType   = Literal[
-    "gam", "idw", "kriging", "rf", "gp", "regression_kriging", "ensemble"
+    "gam", "idw", "kriging", "rf", "xgboost", "lightgbm",
+    "gp", "regression_kriging", "ensemble"
 ]
 
 # Variogram models supported by pykrige
@@ -380,8 +381,110 @@ def fit_random_forest(
 
 
 # ---------------------------------------------------------------------------
-# 3e. Gaussian Process Regression
+# 3e-ext. XGBoost
 # ---------------------------------------------------------------------------
+
+def fit_xgboost(
+    X: np.ndarray,
+    y: np.ndarray,
+    response_type: ResponseType = "continuous",
+    n_estimators: int = 300,
+    learning_rate: float = 0.05,
+    max_depth: int = 4,
+    subsample: float = 0.8,
+    random_state: int = 42,
+):
+    """
+    Fit an XGBoost model (XGBClassifier / XGBRegressor).
+
+    XGBoost is consistently among the best-performing methods in marine SDM
+    benchmarks (Sequeira et al. 2018). Handles missing values natively.
+
+    Returns the fitted xgboost estimator with ``feature_importances_`` attribute.
+    """
+    try:
+        from xgboost import XGBClassifier, XGBRegressor
+    except ImportError:
+        raise ImportError("xgboost is required. Install: pip install xgboost")
+
+    common = dict(
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        max_depth=max_depth,
+        subsample=subsample,
+        colsample_bytree=0.8,
+        random_state=random_state,
+        n_jobs=-1,
+        verbosity=0,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if response_type == "binary":
+            model = XGBClassifier(
+                use_label_encoder=False, eval_metric="logloss", **common
+            ).fit(X, y.astype(int))
+        else:
+            model = XGBRegressor(**common).fit(X, y)
+
+    logger.info(
+        "XGBoost fitted: %d obs, %d estimators, %d features",
+        len(y), n_estimators, X.shape[1],
+    )
+    return model
+
+
+# ---------------------------------------------------------------------------
+# 3e-ext2. LightGBM
+# ---------------------------------------------------------------------------
+
+def fit_lightgbm(
+    X: np.ndarray,
+    y: np.ndarray,
+    response_type: ResponseType = "continuous",
+    n_estimators: int = 300,
+    learning_rate: float = 0.05,
+    num_leaves: int = 31,
+    subsample: float = 0.8,
+    random_state: int = 42,
+):
+    """
+    Fit a LightGBM model (LGBMClassifier / LGBMRegressor).
+
+    LightGBM uses leaf-wise tree growth — faster than XGBoost on large
+    datasets and large spatial prediction grids.
+
+    Returns the fitted lightgbm estimator with ``feature_importances_`` attribute.
+    """
+    try:
+        from lightgbm import LGBMClassifier, LGBMRegressor
+    except ImportError:
+        raise ImportError("lightgbm is required. Install: pip install lightgbm")
+
+    common = dict(
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        num_leaves=num_leaves,
+        subsample=subsample,
+        colsample_bytree=0.8,
+        min_child_samples=10,
+        random_state=random_state,
+        n_jobs=-1,
+        verbose=-1,
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if response_type == "binary":
+            model = LGBMClassifier(**common).fit(X, y.astype(int))
+        else:
+            model = LGBMRegressor(**common).fit(X, y)
+
+    logger.info(
+        "LightGBM fitted: %d obs, %d leaves, %d features",
+        len(y), num_leaves, X.shape[1],
+    )
+    return model
+
+
 
 def fit_gaussian_process(
     X: np.ndarray,
@@ -500,6 +603,8 @@ def predict_grid(
     idw_model: IDWModel | None = None,
     kriging_model=None,
     rf_model=None,
+    xgb_model=None,
+    lgbm_model=None,
     gp_model=None,
     rk_model=None,
     method: MethodType = "ensemble",
@@ -519,6 +624,8 @@ def predict_grid(
     idw_model       : fitted IDWModel
     kriging_model   : fitted pykrige OrdinaryKriging
     rf_model        : fitted sklearn RandomForest estimator
+    xgb_model       : fitted xgboost XGBClassifier/XGBRegressor
+    lgbm_model      : fitted lightgbm LGBMClassifier/LGBMRegressor
     gp_model        : fitted sklearn GaussianProcessRegressor (must have _eva_scaler)
     rk_model        : fitted pykrige RegressionKriging
     method          : which model to use for final predictions
@@ -615,7 +722,39 @@ def predict_grid(
         arr[valid_mask.values] = rf_raw
         collected["rf"] = arr
 
-    # Gaussian Process
+    # XGBoost
+    if xgb_model is not None and predictor_cols:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                from xgboost import XGBClassifier
+                if isinstance(xgb_model, XGBClassifier):
+                    xgb_raw = xgb_model.predict_proba(X_grid)[:, 1]
+                else:
+                    xgb_raw = xgb_model.predict(X_grid)
+            except ImportError:
+                xgb_raw = xgb_model.predict(X_grid)
+        arr = np.full(n, np.nan)
+        arr[valid_mask.values] = xgb_raw
+        collected["xgboost"] = arr
+
+    # LightGBM
+    if lgbm_model is not None and predictor_cols:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                from lightgbm import LGBMClassifier
+                if isinstance(lgbm_model, LGBMClassifier):
+                    lgbm_raw = lgbm_model.predict_proba(X_grid)[:, 1]
+                else:
+                    lgbm_raw = lgbm_model.predict(X_grid)
+            except ImportError:
+                lgbm_raw = lgbm_model.predict(X_grid)
+        arr = np.full(n, np.nan)
+        arr[valid_mask.values] = lgbm_raw
+        collected["lightgbm"] = arr
+
+
     if gp_model is not None and predictor_cols:
         scaler = getattr(gp_model, "_eva_scaler", None)
         X_sc = scaler.transform(X_grid) if scaler is not None else X_grid
@@ -689,6 +828,8 @@ def model_diagnostics(
     feature_names: list[str] | None = None,
     gam_model=None,
     rf_model=None,
+    xgb_model=None,
+    lgbm_model=None,
 ) -> dict:
     """
     Compute model performance metrics.
@@ -730,6 +871,25 @@ def model_diagnostics(
         try:
             importances = rf_model.feature_importances_
             result["feature_importances"] = dict(zip(feature_names, importances.tolist()))
+            result["feature_importance_model"] = "Random Forest"
+        except Exception:
+            pass
+
+    # XGBoost: feature importances
+    if xgb_model is not None and feature_names is not None and "feature_importances" not in result:
+        try:
+            importances = xgb_model.feature_importances_
+            result["feature_importances"] = dict(zip(feature_names, importances.tolist()))
+            result["feature_importance_model"] = "XGBoost"
+        except Exception:
+            pass
+
+    # LightGBM: feature importances
+    if lgbm_model is not None and feature_names is not None and "feature_importances" not in result:
+        try:
+            importances = lgbm_model.feature_importances_ / (lgbm_model.feature_importances_.sum() + 1e-10)
+            result["feature_importances"] = dict(zip(feature_names, importances.tolist()))
+            result["feature_importance_model"] = "LightGBM"
         except Exception:
             pass
 
@@ -764,9 +924,10 @@ def format_diagnostics_html(diag: dict, feature_names: list[str] | None = None) 
             f"<strong>Predictors used:</strong> {', '.join(feature_names)}</p>"
         )
 
-    # Feature importance bar (RF)
+    # Feature importance bar (RF / XGBoost / LightGBM)
     fi = diag.get("feature_importances")
     if fi:
+        fi_model_label = diag.get("feature_importance_model", "Model")
         sorted_fi = sorted(fi.items(), key=lambda x: x[1], reverse=True)
         bars = "".join(
             f"<tr><td style='font-size:0.78rem'>{n}</td>"
@@ -775,7 +936,7 @@ def format_diagnostics_html(diag: dict, feature_names: list[str] | None = None) 
             for n, v in sorted_fi[:15]
         )
         html += (
-            "<p style='margin-top:10px'><strong>Feature Importances (RF)</strong></p>"
+            f"<p style='margin-top:10px'><strong>Feature Importances ({fi_model_label})</strong></p>"
             '<table class="table table-sm" style="font-size:0.82rem;">'
             "<thead><tr><th>Feature</th><th>Importance</th><th>Value</th></tr></thead>"
             f"<tbody>{bars}</tbody></table>"
