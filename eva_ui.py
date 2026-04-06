@@ -723,7 +723,7 @@ app_ui = ui.page_fluid(
                         {"class": "nav-link",
                          "href": "#",
                          "data-nav-id": "nav_data"},
-                        ui.tags.i(class_="bi bi-folder-open"),
+                        ui.tags.i(class_="bi bi-folder2-open"),
                         ui.tags.span("Data Input")
                     ),
                     ui.tags.a(
