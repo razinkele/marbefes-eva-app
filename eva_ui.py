@@ -2020,11 +2020,15 @@ app_ui = ui.page_fluid(
                 ui.input_text("sdm_lon_col", "Longitude column", value="lon", width="100%"),
 
                 ui.hr(),
+                ui.input_action_button("sdm_analyse_btn", "🔬 Analyse Predictors",
+                                       class_="btn btn-info w-100 mb-2",
+                                       icon=ui.tags.i(class_="bi bi-bar-chart-line")),
                 ui.input_action_button("sdm_fit_btn", "Fit & Predict",
                                        class_="btn btn-success w-100",
                                        icon=ui.tags.i(class_="bi bi-play-fill")),
                 ui.br(),
                 ui.output_ui("sdm_fit_status"),
+                ui.output_ui("sdm_analyse_status"),
 
                 width=310,
             ),
@@ -2066,6 +2070,12 @@ app_ui = ui.page_fluid(
                         ui.div(
                             ui.output_ui("sdm_partial_effects_output"),
                             style="padding:1rem;"
+                        ),
+                    ),
+                    ui.nav_panel("🔬 Predictor Analysis",
+                        ui.div(
+                            ui.output_ui("sdm_predictor_analysis"),
+                            style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
                         ),
                     ),
                 ),

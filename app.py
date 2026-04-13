@@ -28,6 +28,20 @@ import pa_calculations
 import pa_export
 import eva_visualizations
 import eva_map
+
+# Import SDM analysis functions (handle various deployment environments)
+import importlib
+import sys as _sys
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in _sys.path:
+    _sys.path.insert(0, _app_dir)
+from scripts.sdm_analyse import (
+    compare_predictor_sets,
+    compare_methods,
+    analyse_collinearity,
+    habitat_preference_table,
+    select_species as sdm_select_species,
+)
 import eva_hexgrid
 import eva_eunis_wms
 import eva_cmems
@@ -76,6 +90,8 @@ def server(input, output, session):
     sdm_fit_message = reactive.Value("")      # status message for fit button feedback
     sdm_dwca_df   = reactive.Value(None)      # DataFrame from DwC-A upload for SDM
     sdm_dwca_info = reactive.Value(None)      # dict with n_sites, n_species, species_list, ...
+    sdm_analysis_results = reactive.Value(None)   # dict with predictor analysis results
+    sdm_analysis_message = reactive.Value("")     # status message for analysis button
 
     # DwC-A state
     dwca_info = reactive.Value(None)   # DwC-A summary dict or None if CSV
@@ -3121,7 +3137,10 @@ def server(input, output, session):
 </div>"""
         return ui.HTML(html)
 
-
+    # ── SDM: Fit & Predict handler ───────────────────────────────────────────
+    @reactive.effect
+    @reactive.event(input.sdm_fit_btn)
+    def _handle_sdm_fit():
         grid = generated_grid.get()
         cov  = sdm_covariates.get()
 
@@ -3249,7 +3268,6 @@ def server(input, output, session):
 
             # 4. Predict for all grid cells
             sdm_fit_message.set("⏳ Predicting distribution over grid…")
-            # ensemble weights: equal for included models
             ens_weights = None
             if method == "ensemble":
                 ens_weights = {}
@@ -3366,6 +3384,354 @@ def server(input, output, session):
         color = "#155724" if msg.startswith("✅") else ("#721c24" if msg.startswith("❌") else "#856404")
         bg    = "#d4edda" if msg.startswith("✅") else ("#f8d7da" if msg.startswith("❌") else "#fff3cd")
         return ui.div(msg, style=f"margin-top:8px;padding:8px;border-radius:4px;font-size:0.82rem;background:{bg};color:{color};")
+
+    # ── SDM: Analyse Predictors handler ──────────────────────────────────────
+
+    @reactive.effect
+    @reactive.event(input.sdm_analyse_btn)
+    def _handle_sdm_analyse():
+        cov = sdm_covariates.get()
+        data, lat_col, lon_col = _get_sdm_sample_df()
+
+        if data is None or cov is None:
+            sdm_analysis_message.set("⚠️ Load data and fetch covariates first.")
+            return
+
+        sdm_analysis_message.set("⏳ Running predictor analysis…")
+
+        try:
+            # Extract covariates at sampling sites
+            sites_cov = eva_sdm.extract_covariates_at_sites(
+                data, cov, lat_col=lat_col, lon_col=lon_col
+            )
+
+            # Identify species columns from data
+            dwca_info = sdm_dwca_info.get()
+            if dwca_info and "species_list" in dwca_info:
+                species_list = dwca_info["species_list"]
+            else:
+                meta_cols = {"lat", "lon", "eventid", "locationid", "site_id",
+                             "station", "date", "depth", "geometry"}
+                species_list = [c for c in data.columns
+                                if c.lower() not in meta_cols
+                                and pd.api.types.is_numeric_dtype(data[c])]
+
+            # Auto-select species across prevalence gradient
+            selected = sdm_select_species(
+                sites_cov, species_list, requested=None,
+                min_prevalence=0.05, max_species=8
+            )
+
+            if not selected:
+                sdm_analysis_message.set("⚠️ No species with sufficient prevalence (≥5%) found.")
+                return
+
+            # Run predictor comparison for each species
+            sdm_analysis_message.set(f"⏳ Comparing predictors for {len(selected)} species…")
+            species_results = {}
+            for sp, prev, n_pres in selected:
+                try:
+                    species_results[sp] = compare_predictor_sets(
+                        sites_cov, sp, do_cv=False
+                    )
+                except Exception as exc:
+                    logger.warning("Predictor analysis failed for %s: %s", sp, exc)
+
+            # Run collinearity analysis
+            sdm_analysis_message.set("⏳ Analysing collinearity…")
+            collinearity = analyse_collinearity(sites_cov)
+
+            # Build habitat preference table
+            hab_pref = habitat_preference_table(sites_cov, selected)
+
+            # Method comparison on primary species
+            sdm_analysis_message.set(f"⏳ Comparing methods for {selected[0][0]}…")
+            method_results = compare_methods(
+                sites_cov, selected[0][0], cov,
+                methods=["rf", "kriging"],
+            )
+
+            sdm_analysis_results.set({
+                "species_results": species_results,
+                "species_info": selected,
+                "collinearity": collinearity,
+                "habitat_pref": hab_pref,
+                "method_results": method_results,
+                "n_sites": len(sites_cov),
+            })
+            sdm_analysis_message.set(f"✅ Analysis complete — {len(selected)} species, {len(sites_cov)} sites.")
+
+        except Exception as e:
+            import traceback
+            sdm_analysis_message.set(f"❌ Analysis error: {e}")
+            logger.error("SDM analysis error: %s", traceback.format_exc())
+
+    @output
+    @render.ui
+    def sdm_analyse_status():
+        msg = sdm_analysis_message.get()
+        if not msg:
+            return ui.div()
+        color = "#155724" if msg.startswith("✅") else ("#721c24" if msg.startswith("❌") else "#856404")
+        bg    = "#d4edda" if msg.startswith("✅") else ("#f8d7da" if msg.startswith("❌") else "#fff3cd")
+        return ui.div(msg, style=f"margin-top:8px;padding:8px;border-radius:4px;font-size:0.82rem;background:{bg};color:{color};")
+
+    @output
+    @render.ui
+    def sdm_predictor_analysis():
+        res = sdm_analysis_results.get()
+        if res is None:
+            return ui.div(
+                ui.p("🔬 Click ", ui.tags.strong("Analyse Predictors"),
+                     " to compare environmental variables vs EUNIS habitats, "
+                     "run collinearity checks, and evaluate method performance.",
+                     style="color:#999;padding:1rem;"),
+            )
+
+        species_results = res["species_results"]
+        species_info = res["species_info"]
+        collinearity = res["collinearity"]
+        hab_pref = res["habitat_pref"]
+        method_results = res["method_results"]
+
+        html_parts = ['<div style="font-size:0.85rem;padding:0.5rem;">']
+
+        # ── 1. Predictor comparison table ──────────────────────────────────
+        html_parts.append("""
+<h5 style="color:#006994;margin-bottom:8px;">📊 Predictor Comparison (Random Forest)</h5>
+<p style="font-size:0.8rem;color:#666;margin-bottom:6px;">
+  Does adding EUNIS 2019 habitats improve species predictions over environmental variables alone?
+</p>
+<table style="width:100%;border-collapse:collapse;font-size:0.82rem;margin-bottom:12px;">
+<thead>
+<tr style="background:#f0f7fb;">
+  <th style="padding:4px 8px;text-align:left;border-bottom:2px solid #006994;">Species</th>
+  <th style="padding:4px 8px;text-align:right;border-bottom:2px solid #006994;">Prev.</th>
+  <th style="padding:4px 8px;text-align:right;border-bottom:2px solid #006994;">R² env</th>
+  <th style="padding:4px 8px;text-align:right;border-bottom:2px solid #006994;">R² EUNIS</th>
+  <th style="padding:4px 8px;text-align:right;border-bottom:2px solid #006994;">R² both</th>
+  <th style="padding:4px 8px;text-align:right;border-bottom:2px solid #006994;">Δ (both−env)</th>
+</tr>
+</thead>
+<tbody>""")
+
+        for sp, prev, n_pres in species_info:
+            if sp not in species_results:
+                continue
+            sr = species_results[sp]
+            r2_env = sr.get("env", {}).get("r2_train", float("nan"))
+            r2_eunis = sr.get("eunis", {}).get("r2_train", float("nan"))
+            r2_both = sr.get("both", {}).get("r2_train", float("nan"))
+            delta = r2_both - r2_env if not (np.isnan(r2_both) or np.isnan(r2_env)) else float("nan")
+            delta_color = "#155724" if delta > 0.01 else ("#721c24" if delta < -0.01 else "#666")
+
+            html_parts.append(f"""
+<tr style="border-bottom:1px solid #eee;">
+  <td style="padding:3px 8px;"><em>{html_escape(sp)}</em></td>
+  <td style="padding:3px 8px;text-align:right;">{prev:.0%}</td>
+  <td style="padding:3px 8px;text-align:right;">{r2_env:.4f}</td>
+  <td style="padding:3px 8px;text-align:right;">{r2_eunis:.4f}</td>
+  <td style="padding:3px 8px;text-align:right;">{r2_both:.4f}</td>
+  <td style="padding:3px 8px;text-align:right;color:{delta_color};font-weight:600;">
+    {delta:+.4f}
+  </td>
+</tr>""")
+
+        html_parts.append("</tbody></table>")
+
+        # ── 2. Feature importance for top species ──────────────────────────
+        html_parts.append('<h5 style="color:#006994;margin:12px 0 8px;">🎯 Top Features (combined model)</h5>')
+        for sp, prev, _ in species_info[:3]:
+            sr = species_results.get(sp, {})
+            both = sr.get("both", {})
+            imp = both.get("importances", {})
+            if not imp:
+                continue
+            top5 = sorted(imp.items(), key=lambda x: -x[1])[:5]
+            max_imp = top5[0][1] if top5 else 1
+
+            html_parts.append(f'<div style="margin-bottom:10px;">')
+            html_parts.append(f'<strong><em>{html_escape(sp)}</em></strong> '
+                            f'<span style="color:#666;font-size:0.78rem;">(R²={both.get("r2_train", 0):.3f})</span>')
+            for fname, val in top5:
+                bar_w = int(val / max_imp * 120) if max_imp > 0 else 0
+                is_eunis = "EUNIS" in fname or "eunis" in fname.lower()
+                bar_color = "#e67e22" if is_eunis else "#2980b9"
+                html_parts.append(
+                    f'<div style="display:flex;align-items:center;gap:6px;font-size:0.78rem;margin:1px 0;">'
+                    f'<span style="width:200px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">'
+                    f'<code>{html_escape(fname[:30])}</code></span>'
+                    f'<span style="background:{bar_color};height:10px;width:{bar_w}px;border-radius:2px;display:inline-block;"></span>'
+                    f'<span style="color:#666;">{val:.3f}</span></div>'
+                )
+            html_parts.append('</div>')
+
+        html_parts.append(
+            '<p style="font-size:0.75rem;color:#888;">Legend: '
+            '<span style="background:#2980b9;padding:1px 8px;border-radius:2px;color:white;">env</span> '
+            '<span style="background:#e67e22;padding:1px 8px;border-radius:2px;color:white;">EUNIS</span></p>'
+        )
+
+        # ── 3. Collinearity analysis ──────────────────────────────────────
+        if collinearity and "error" not in collinearity:
+            html_parts.append('<hr style="margin:12px 0;">')
+            html_parts.append('<h5 style="color:#006994;margin-bottom:8px;">🔗 EUNIS–Environment Collinearity</h5>')
+
+            # Habitat distribution
+            hab_counts = collinearity.get("habitat_counts", {})
+            if hab_counts:
+                html_parts.append('<p style="font-size:0.78rem;color:#555;margin-bottom:4px;"><strong>Habitat distribution:</strong></p>')
+                html_parts.append('<table style="font-size:0.78rem;border-collapse:collapse;margin-bottom:8px;">')
+                for h, cnt in sorted(hab_counts.items(), key=lambda x: -x[1]):
+                    html_parts.append(
+                        f'<tr><td style="padding:1px 8px;">{html_escape(str(h))}</td>'
+                        f'<td style="padding:1px 8px;text-align:right;"><strong>{cnt}</strong> sites</td></tr>'
+                    )
+                html_parts.append('</table>')
+
+            # Depth by habitat
+            depth_by = collinearity.get("depth_by_habitat", {})
+            if depth_by:
+                html_parts.append('<p style="font-size:0.78rem;color:#555;margin-bottom:4px;"><strong>Depth ranges by habitat:</strong></p>')
+                html_parts.append('<table style="font-size:0.78rem;border-collapse:collapse;margin-bottom:8px;">')
+                html_parts.append(
+                    '<tr style="background:#f0f7fb;">'
+                    '<th style="padding:2px 8px;text-align:left;">Habitat</th>'
+                    '<th style="padding:2px 8px;text-align:right;">Sites</th>'
+                    '<th style="padding:2px 8px;text-align:right;">Depth mean</th>'
+                    '<th style="padding:2px 8px;">Depth range</th></tr>'
+                )
+                for h, d in sorted(depth_by.items(), key=lambda x: x[1].get("mean", 0) or 0):
+                    html_parts.append(
+                        f'<tr><td style="padding:1px 8px;">{html_escape(str(h))}</td>'
+                        f'<td style="padding:1px 8px;text-align:right;">{d["count"]}</td>'
+                        f'<td style="padding:1px 8px;text-align:right;">{d["mean"]:.1f} m</td>'
+                        f'<td style="padding:1px 8px;">{d["min"]:.1f}–{d["max"]:.1f} m</td></tr>'
+                    )
+                html_parts.append('</table>')
+
+            # Dummy correlations with depth
+            corrs = collinearity.get("dummy_correlations", {})
+            depth_corrs = corrs.get("depth_m", {})
+            if depth_corrs:
+                html_parts.append('<p style="font-size:0.78rem;color:#555;margin-bottom:4px;"><strong>EUNIS–depth correlation:</strong></p>')
+                html_parts.append('<table style="font-size:0.78rem;border-collapse:collapse;margin-bottom:8px;">')
+                for d_name, r in sorted(depth_corrs.items(), key=lambda x: -abs(x[1])):
+                    bold = "font-weight:700;" if abs(r) >= 0.7 else ""
+                    color = "#c0392b" if abs(r) >= 0.7 else "#333"
+                    html_parts.append(
+                        f'<tr><td style="padding:1px 8px;">{html_escape(d_name)}</td>'
+                        f'<td style="padding:1px 8px;text-align:right;{bold}color:{color};">'
+                        f'{r:+.3f}</td></tr>'
+                    )
+                html_parts.append('</table>')
+
+            # Substrate
+            substrate = collinearity.get("substrate_distribution", {})
+            if substrate:
+                html_parts.append('<p style="font-size:0.78rem;color:#555;margin-bottom:4px;"><strong>Substrate:</strong> ')
+                parts = [f'{html_escape(str(k))} ({v} sites)' for k, v in substrate.items()]
+                html_parts.append(", ".join(parts))
+                html_parts.append('</p>')
+
+        # ── 4. Habitat preference table ───────────────────────────────────
+        if hab_pref is not None and len(hab_pref) > 0:
+            html_parts.append('<hr style="margin:12px 0;">')
+            html_parts.append('<h5 style="color:#006994;margin-bottom:8px;">🏠 Habitat Preference Patterns</h5>')
+            html_parts.append('<div style="overflow-x:auto;">')
+            html_parts.append('<table style="font-size:0.78rem;border-collapse:collapse;width:100%;">')
+            # Header
+            cols = list(hab_pref.columns)
+            html_parts.append('<tr style="background:#f0f7fb;">')
+            for c in cols:
+                html_parts.append(f'<th style="padding:3px 6px;text-align:left;border-bottom:2px solid #006994;">{html_escape(str(c))}</th>')
+            html_parts.append('</tr>')
+            # Rows
+            for _, row in hab_pref.iterrows():
+                html_parts.append('<tr style="border-bottom:1px solid #eee;">')
+                for c in cols:
+                    val = str(row[c])
+                    style = "padding:2px 6px;"
+                    if c == "Species":
+                        style += "font-style:italic;"
+                    html_parts.append(f'<td style="{style}">{html_escape(val)}</td>')
+                html_parts.append('</tr>')
+            html_parts.append('</table></div>')
+
+        # ── 5. Method comparison ──────────────────────────────────────────
+        if method_results:
+            html_parts.append('<hr style="margin:12px 0;">')
+            html_parts.append(f'<h5 style="color:#006994;margin-bottom:8px;">⚖️ Method Comparison '
+                            f'({html_escape(species_info[0][0])})</h5>')
+            html_parts.append(
+                '<table style="font-size:0.78rem;border-collapse:collapse;width:100%;margin-bottom:8px;">'
+                '<tr style="background:#f0f7fb;">'
+                '<th style="padding:3px 8px;text-align:left;border-bottom:2px solid #006994;">Method</th>'
+                '<th style="padding:3px 8px;text-align:right;border-bottom:2px solid #006994;">R² (in-sample)</th>'
+                '<th style="padding:3px 8px;text-align:right;border-bottom:2px solid #006994;">RMSE</th>'
+                '<th style="padding:3px 8px;border-bottom:2px solid #006994;">Predictors</th></tr>'
+            )
+            for method_name, mr in method_results.items():
+                if "error" in mr:
+                    html_parts.append(
+                        f'<tr><td style="padding:2px 8px;">{html_escape(method_name)}</td>'
+                        f'<td colspan="3" style="padding:2px 8px;color:#c0392b;">Error: {html_escape(mr["error"])}</td></tr>'
+                    )
+                else:
+                    r2 = mr.get("r2_insample", float("nan"))
+                    rmse = mr.get("rmse_insample", float("nan"))
+                    preds = mr.get("predictors", "—")
+                    html_parts.append(
+                        f'<tr style="border-bottom:1px solid #eee;">'
+                        f'<td style="padding:2px 8px;">{html_escape(method_name)}</td>'
+                        f'<td style="padding:2px 8px;text-align:right;">{r2:.4f}</td>'
+                        f'<td style="padding:2px 8px;text-align:right;">{rmse:.4f}</td>'
+                        f'<td style="padding:2px 8px;">{html_escape(str(preds))}</td></tr>'
+                    )
+            html_parts.append('</table>')
+
+        # ── Conclusions ───────────────────────────────────────────────────
+        html_parts.append('<hr style="margin:12px 0;">')
+        html_parts.append('<div style="background:#f8f9fa;border-left:4px solid #006994;padding:10px 14px;border-radius:0 4px 4px 0;">')
+        html_parts.append('<strong style="color:#006994;">💡 Key Findings</strong><ul style="margin:4px 0;padding-left:1.2rem;font-size:0.82rem;color:#555;">')
+
+        # Auto-generate conclusions from data
+        max_delta = 0
+        for sp, sr in species_results.items():
+            r2_env = sr.get("env", {}).get("r2_train", float("nan"))
+            r2_both = sr.get("both", {}).get("r2_train", float("nan"))
+            if not (np.isnan(r2_env) or np.isnan(r2_both)):
+                max_delta = max(max_delta, abs(r2_both - r2_env))
+
+        if max_delta < 0.01:
+            html_parts.append(
+                '<li>EUNIS habitats add <strong>negligible predictive value</strong> '
+                f'(max Δ R² = {max_delta:.4f}). Environmental variables alone are sufficient.</li>'
+            )
+        else:
+            html_parts.append(
+                f'<li>EUNIS habitats show <strong>some additional value</strong> '
+                f'(max Δ R² = {max_delta:.4f}).</li>'
+            )
+
+        depth_corrs = collinearity.get("dummy_correlations", {}).get("depth_m", {})
+        max_corr = max((abs(v) for v in depth_corrs.values()), default=0)
+        if max_corr >= 0.7:
+            html_parts.append(
+                f'<li>High collinearity between EUNIS and depth (max |r| = {max_corr:.2f}) '
+                'explains the redundancy.</li>'
+            )
+
+        substrate = collinearity.get("substrate_distribution", {})
+        if len(substrate) == 1:
+            html_parts.append(
+                '<li>Substrate is <strong>homogeneous</strong> — provides no discriminatory power.</li>'
+            )
+
+        html_parts.append('</ul></div>')
+        html_parts.append('</div>')
+
+        return ui.HTML("\n".join(html_parts))
 
     # ── SDM: sampling-site overlay helper ────────────────────────────────────
 
