@@ -2034,50 +2034,67 @@ app_ui = ui.page_fluid(
             ),
             # Main content — map + diagnostics
             ui.div(
-                ui.navset_tab(
-                    ui.nav_panel("📋 Data Analysis",
-                        ui.div(
-                            ui.output_ui("sdm_data_analysis"),
-                            style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                # CSS for compact SDM tabs
+                ui.tags.style("""
+                    #sdm_tabs .nav-tabs { flex-wrap: wrap; gap: 2px 0; }
+                    #sdm_tabs .nav-tabs .nav-link {
+                        font-size: 0.78rem; padding: 0.35rem 0.6rem;
+                        white-space: nowrap;
+                    }
+                    #sdm_tabs .nav-tabs .nav-link.active {
+                        font-weight: 600; border-bottom: 2px solid #006994;
+                        color: #006994;
+                    }
+                """),
+                ui.div(
+                    ui.navset_tab(
+                        ui.nav_panel("📋 Data",
+                            ui.div(
+                                ui.output_ui("sdm_data_analysis"),
+                                style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                            ),
                         ),
-                    ),
-                    ui.nav_panel("🗺️ Predicted Distribution",
-                        ui.output_ui("sdm_map_output"),
-                    ),
-                    ui.nav_panel("🎯 Uncertainty",
-                        ui.div(
-                            ui.p("Kriging variance or GP standard deviation — "
-                                 "lower values indicate more confident predictions.",
-                                 style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
-                            ui.output_ui("sdm_uncertainty_map_output"),
+                        ui.nav_panel("🔬 Predictors",
+                            ui.div(
+                                ui.output_ui("sdm_predictor_analysis"),
+                                style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                            ),
                         ),
-                    ),
-                    ui.nav_panel("📊 Diagnostics",
-                        ui.div(
-                            ui.output_ui("sdm_diagnostics_output"),
-                            style="padding:1rem;"
+                        ui.nav_panel("🗺️ Map",
+                            ui.output_ui("sdm_map_output"),
                         ),
-                    ),
-                    ui.nav_panel("📉 Variogram",
-                        ui.div(
-                            ui.p("Empirical and fitted variogram for Kriging-based methods.",
-                                 style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
-                            ui.output_ui("sdm_variogram_output"),
-                            style="padding:0.5rem;"
+                        ui.nav_panel("🎯 Uncertainty",
+                            ui.div(
+                                ui.p("Kriging variance or GP standard deviation — "
+                                     "lower values indicate more confident predictions.",
+                                     style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
+                                ui.output_ui("sdm_uncertainty_map_output"),
+                            ),
                         ),
-                    ),
-                    ui.nav_panel("📋 Partial Effects (GAM)",
-                        ui.div(
-                            ui.output_ui("sdm_partial_effects_output"),
-                            style="padding:1rem;"
+                        ui.nav_panel("📊 Diagnostics",
+                            ui.div(
+                                ui.output_ui("sdm_diagnostics_output"),
+                                style="padding:1rem;"
+                            ),
                         ),
-                    ),
-                    ui.nav_panel("🔬 Predictor Analysis",
-                        ui.div(
-                            ui.output_ui("sdm_predictor_analysis"),
-                            style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                        ui.nav_panel("📉 Variogram",
+                            ui.div(
+                                ui.p("Empirical and fitted variogram for Kriging-based methods.",
+                                     style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
+                                ui.output_ui("sdm_variogram_output"),
+                                style="padding:0.5rem;"
+                            ),
                         ),
+                        ui.nav_panel("📋 GAM Effects",
+                            ui.div(
+                                ui.output_ui("sdm_partial_effects_output"),
+                                style="padding:1rem;"
+                            ),
+                        ),
+                        id="sdm_tabs",
                     ),
+                    id="sdm_tabs",
+                    style="height:100%;"
                 ),
                 style="height:100%;"
             ),
