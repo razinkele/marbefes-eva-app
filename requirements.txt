@@ -10,6 +10,7 @@ branca>=0.7.0
 kaleido>=0.2.1
 pyproj>=3.6.0
 h3>=3.7.6
+Pillow>=10.0.0
 requests>=2.31.0
 owslib>=0.29.0
 scipy>=1.11.0
