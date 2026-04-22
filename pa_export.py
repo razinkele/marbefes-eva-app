@@ -144,11 +144,19 @@ def _build_extent_sheet(ws, extent_df, unit):
         else:
             name = EUNIS_LOOKUP.get(code, "")
         area = float(row[area_col]) if area_col else 0.0
-        pct = (area / total_area * 100) if total_area > 0 else 0.0
+        if "pct_total" in df.columns:
+            pct_raw = row["pct_total"]
+            pct = float(pct_raw) if not pd.isna(pct_raw) else 0.0
+        else:
+            pct = (area / total_area * 100) if total_area > 0 else 0.0
         ws.append([code, name, round(area, 4), round(pct, 2)])
 
     # Totals row
-    ws.append(["TOTAL", "", round(total_area, 4), 100.0])
+    if "pct_total" in df.columns:
+        total_pct = float(df["pct_total"].sum())
+    else:
+        total_pct = 100.0 if total_area > 0 else 0.0
+    ws.append(["TOTAL", "", round(total_area, 4), round(total_pct, 2)])
 
 
 def _build_supply_sheet(ws, supply_df):

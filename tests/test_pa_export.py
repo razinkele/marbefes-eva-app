@@ -396,3 +396,42 @@ class TestBuildExtentSheet:
         assert rows[1][1] == "Posidonia oceanica meadows", (
             f"None habitat_name should fall back to EUNIS_LOOKUP, got {rows[1][1]!r}"
         )
+
+    def test_pct_total_from_dataframe_is_preserved(self):
+        """If DataFrame carries pct_total, exporter must use it — not recompute.
+
+        Fixture choice: areas 1.0 and 2.0 would yield recomputed percentages
+        of 33.33 and 66.67. We deliberately override pct_total to 50.0/50.0
+        so the test fails before the fix and passes after.
+        """
+        df = pd.DataFrame({
+            "eunis_code":   ["A",   "B"],
+            "habitat_name": ["Alpha", "Beta"],
+            "area":         [1.0,   2.0],
+            "pct_total":    [50.0,  50.0],  # override, NOT matching area ratio
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        rows = list(ws.iter_rows(min_row=2, max_row=3, values_only=True))
+        # % column is index 3
+        assert rows[0][3] == 50.0, f"Expected 50.0 (from pct_total), got {rows[0][3]}"
+        assert rows[1][3] == 50.0, f"Expected 50.0 (from pct_total), got {rows[1][3]}"
+
+    def test_total_row_reflects_actual_pct_sum(self):
+        """TOTAL row % must equal sum of pct_total, not the hardcoded 100.0."""
+        df = pd.DataFrame({
+            "eunis_code":   ["A",   "B"],
+            "habitat_name": ["Alpha", "Beta"],
+            "area":         [1.0,   1.0],
+            "pct_total":    [40.0,  40.0],  # partial coverage — sums to 80
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        # TOTAL row is row 4 (header=1, A=2, B=3, TOTAL=4)
+        total_row = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
+        assert total_row[0] == "TOTAL"
+        assert total_row[3] == 80.0, (
+            f"Expected TOTAL row % = 80.0 (sum of pct_total), got {total_row[3]}"
+        )
