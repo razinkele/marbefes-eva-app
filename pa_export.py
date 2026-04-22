@@ -135,7 +135,14 @@ def _build_extent_sheet(ws, extent_df, unit):
 
     for _, row in df.iterrows():
         code = str(row[code_col]) if code_col else ""
-        name = EUNIS_LOOKUP.get(code, "")
+        if "habitat_name" in df.columns:
+            name_raw = row["habitat_name"]
+            if pd.isna(name_raw) or not str(name_raw).strip():
+                name = EUNIS_LOOKUP.get(code, "")
+            else:
+                name = str(name_raw)
+        else:
+            name = EUNIS_LOOKUP.get(code, "")
         area = float(row[area_col]) if area_col else 0.0
         pct = (area / total_area * 100) if total_area > 0 else 0.0
         ws.append([code, name, round(area, 4), round(pct, 2)])

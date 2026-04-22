@@ -15,7 +15,12 @@ import pytest
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from pa_export import generate_pa_workbook, generate_combined_workbook, generate_bbt8_workbook
+from pa_export import (
+    _build_extent_sheet,
+    generate_bbt8_workbook,
+    generate_combined_workbook,
+    generate_pa_workbook,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +352,47 @@ class TestGenerateBBT8Workbook:
         # Header row
         assert ws.cell(row=1, column=1).value == "EUNIS2019C"
         assert ws.cell(row=1, column=2).value == "Sum of area"
+
+
+# ---------------------------------------------------------------------------
+# TestBuildExtentSheet
+# ---------------------------------------------------------------------------
+
+class TestBuildExtentSheet:
+    def test_custom_habitat_name_preserved(self):
+        """Custom habitat names (not in EUNIS_LOOKUP) must survive export."""
+        df = pd.DataFrame({
+            "eunis_code":   ["X99"],
+            "habitat_name": ["Custom reef mosaic"],
+            "area":         [42.0],
+            "pct_total":    [100.0],
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        data_row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
+        # Columns: EUNIS Code, Habitat Name, Area (Ha), % of Total
+        assert data_row[0] == "X99"
+        assert data_row[1] == "Custom reef mosaic", (
+            f"Expected custom name, got {data_row[1]!r}"
+        )
+
+    def test_empty_habitat_name_falls_back_to_lookup(self):
+        """If habitat_name is empty/NaN for a real EUNIS code, fall back to lookup."""
+        df = pd.DataFrame({
+            "eunis_code":   ["MB252", "MB252"],
+            "habitat_name": ["", None],  # both empty — CSV round-trip scenarios
+            "area":         [10.0, 20.0],
+            "pct_total":    [33.3, 66.7],
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        rows = list(ws.iter_rows(min_row=2, max_row=3, values_only=True))
+        # Both rows should show the real EUNIS_LOOKUP name, not empty string
+        assert rows[0][1] == "Posidonia oceanica meadows", (
+            f"Empty-string habitat_name should fall back to EUNIS_LOOKUP, got {rows[0][1]!r}"
+        )
+        assert rows[1][1] == "Posidonia oceanica meadows", (
+            f"None habitat_name should fall back to EUNIS_LOOKUP, got {rows[1][1]!r}"
+        )
