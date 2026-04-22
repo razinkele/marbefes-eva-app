@@ -2850,7 +2850,8 @@ def server(input, output, session):
         condition = eunis_data.compute_eunis_condition(overlay, eva)
         supply = eunis_data.compute_eunis_supply(overlay, eva)
         accounts = eunis_data.build_accounts_summary(extent, condition)
-        missing = eunis_data.build_missing_values(overlay, eva, total_bbt_area_m2=0)
+        total_area_m2 = float(extent["area_m2"].sum()) if "area_m2" in extent.columns else 0.0
+        missing = eunis_data.build_missing_values(overlay, eva, total_bbt_area_m2=total_area_m2)
 
         # main_values: per-subzone
         eva_sub = eva[["Subzone_ID", "TotalEV_MAX", "Confidence"]].copy() if "Subzone_ID" in eva.columns else pd.DataFrame()
