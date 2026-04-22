@@ -17,6 +17,7 @@ from pa_calculations import (
     assemble_supply_table,
     compute_extent,
     detect_habitat_column,
+    reproject_to_metric,
     validate_benefit_names,
     validate_completeness,
 )
@@ -156,3 +157,27 @@ class TestBenefitNameValidation:
 
     def test_duplicate_names(self):
         assert validate_benefit_names(["A", "B", "A"]) is False
+
+
+# ---------------------------------------------------------------------------
+# TestReprojectToMetric
+# ---------------------------------------------------------------------------
+
+class TestReprojectToMetric:
+    def test_decorated_epsg_string_is_parsed(self):
+        """Decorated `"EPSG:#### (description)"` must be parsed, not silently dropped.
+
+        Fixture choice: `_make_test_gdf` is centered in UTM zone 33N, so the
+        UTM auto-detect fallback returns EPSG:32633. We deliberately pass a
+        DECORATED string for EPSG:3035 (ETRS89-LAEA Europe) which pyproj
+        cannot parse raw. Before the fix: parse fails → UTM auto-detect →
+        32633. After the fix: regex extracts 3035 → from_epsg → 3035.
+        """
+        gdf = _make_test_gdf()  # WGS-84 GeoDataFrame, centroid in UTM 33N
+        decorated = "EPSG:3035 (ETRS89 / LAEA Europe)"
+        out = reproject_to_metric(gdf, original_crs=decorated)
+        assert out.crs.to_epsg() == 3035, (
+            f"Expected EPSG:3035 (regex-extracted from decorated string), "
+            f"got {out.crs.to_epsg()} — likely UTM auto-detect fallback, "
+            "meaning the decorated CRS string was silently dropped."
+        )

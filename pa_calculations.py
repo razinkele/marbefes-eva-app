@@ -6,6 +6,7 @@ and validation.  No Shiny / UI dependencies.
 """
 
 import logging
+import re
 
 import geopandas as gpd
 import numpy as np
@@ -34,12 +35,27 @@ def reproject_to_metric(gdf: gpd.GeoDataFrame, original_crs=None) -> gpd.GeoData
     3. Fallback to EPSG:3857 with a logged warning.
     """
     if original_crs is not None:
+        crs_obj = None
         try:
             crs_obj = pyproj.CRS.from_user_input(original_crs)
-            if crs_obj.is_projected:
-                return gdf.to_crs(crs_obj)
         except Exception:
-            logger.warning("Could not parse original_crs=%r; falling back to auto-detect.", original_crs)
+            # Extract EPSG:#### from decorated strings like "EPSG:32633 (UTM zone 33N)"
+            match = re.search(r"EPSG:(\d+)", str(original_crs))
+            if match:
+                try:
+                    crs_obj = pyproj.CRS.from_epsg(int(match.group(1)))
+                except Exception:
+                    logger.warning(
+                        "Could not parse original_crs=%r; falling back to auto-detect.",
+                        original_crs,
+                    )
+            else:
+                logger.warning(
+                    "Could not parse original_crs=%r; falling back to auto-detect.",
+                    original_crs,
+                )
+        if crs_obj is not None and crs_obj.is_projected:
+            return gdf.to_crs(crs_obj)
 
     try:
         bounds = gdf.total_bounds  # minx, miny, maxx, maxy

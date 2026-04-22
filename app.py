@@ -262,7 +262,7 @@ def server(input, output, session):
             try:
                 gdf = dwca_reader.extract_geodataframe(file_path)
                 if gdf is not None and not gdf.empty:
-                    original_crs.set("EPSG:4326 (WGS84)")
+                    original_crs.set("EPSG:4326")
                     # Compute match info
                     csv_ids = set(df['Subzone ID'].astype(str).str.strip())
                     geo_ids = set(gdf['Subzone ID'])
@@ -758,7 +758,7 @@ def server(input, output, session):
         # Auto-load into the map pipeline so the Map tab shows it immediately
         geo_data.set(grid[["Subzone ID", "geometry"]])
         geo_data_full.set(grid.copy())
-        original_crs.set("EPSG:4326 (WGS84)")
+        original_crs.set("EPSG:4326")
         # Update match info if CSV data is already loaded
         csv_df = uploaded_data.get()
         if csv_df is not None:
@@ -812,7 +812,7 @@ def server(input, output, session):
             return
         geo_data.set(grid[["Subzone ID", "geometry"]])
         geo_data_full.set(grid.copy())
-        original_crs.set("EPSG:4326 (WGS84)")
+        original_crs.set("EPSG:4326")
         # Update match info if CSV data is already loaded
         csv_df = uploaded_data.get()
         if csv_df is not None:
@@ -870,7 +870,7 @@ def server(input, output, session):
         if gdf.crs is not None:
             original_crs.set(str(gdf.crs))
         else:
-            original_crs.set("Unknown (no CRS defined)")
+            original_crs.set(None)
 
         # Reproject to WGS84 for Leaflet if needed
         if gdf.crs is not None and gdf.crs.to_epsg() != 4326:
