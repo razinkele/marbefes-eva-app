@@ -266,20 +266,8 @@ def clean_supply_value(val) -> float | None:
     return out
 
 
-# ---------------------------------------------------------------------------
-# TODO stubs — reserved for future implementation
-# ---------------------------------------------------------------------------
-
-def compute_use_table(supply_data, sector_allocations):
-    """Compute the ecosystem-service use table (not yet implemented)."""
-    raise NotImplementedError("compute_use_table is not yet implemented")
-
-
-def compute_condition_account(condition_data):
-    """Compute the ecosystem condition account (not yet implemented)."""
-    raise NotImplementedError("compute_condition_account is not yet implemented")
-
-
-def compute_extent_changes(opening_extent, closing_extent):
-    """Compute extent change account (not yet implemented)."""
-    raise NotImplementedError("compute_extent_changes is not yet implemented")
+# Deferred SEEA EA accounts (use table, condition account, extent-change
+# account) are not implemented here. The one working flow — per-habitat
+# condition from the EUNIS + EVA join — lives in
+# `scripts/compute_physical_accounts.py`. See
+# `docs/plans/2026-03-16-physical-accounts-plan.md` for the intended API.
