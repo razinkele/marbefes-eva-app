@@ -2264,11 +2264,12 @@ def server(input, output, session):
             quantities = {}
             for code in habitat_codes:
                 try:
-                    val = input[f"supply_{slug}_{code}"]()
-                    if val is not None:
-                        quantities[code] = float(val)
-                except (KeyError, TypeError, ValueError):
-                    pass
+                    raw = input[f"supply_{slug}_{code}"]()
+                except (KeyError, TypeError):
+                    continue
+                cleaned = pa_calculations.clean_supply_value(raw)
+                if cleaned is not None:
+                    quantities[code] = cleaned
             if quantities:
                 supply_data[name] = quantities
         return supply_data

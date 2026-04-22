@@ -249,6 +249,23 @@ def validate_benefit_names(names: list[str]) -> bool:
     return len(names) == len(set(names))
 
 
+def clean_supply_value(val) -> float | None:
+    """Return ``val`` as a non-negative float, or None if invalid.
+
+    Rejects: None, non-numeric strings, NaN, and negative values (a physical
+    supply quantity — tonnes, visitor-days, etc. — cannot be negative).
+    """
+    if val is None:
+        return None
+    try:
+        out = float(val)
+    except (TypeError, ValueError):
+        return None
+    if np.isnan(out) or out < 0:
+        return None
+    return out
+
+
 # ---------------------------------------------------------------------------
 # TODO stubs — reserved for future implementation
 # ---------------------------------------------------------------------------

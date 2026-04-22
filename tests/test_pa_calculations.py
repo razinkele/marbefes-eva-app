@@ -15,6 +15,7 @@ import geopandas as gpd
 
 from pa_calculations import (
     assemble_supply_table,
+    clean_supply_value,
     compute_extent,
     detect_habitat_column,
     reproject_to_metric,
@@ -212,3 +213,27 @@ class TestReprojectToMetric:
             f"got {out.crs.to_epsg()} — likely UTM auto-detect fallback, "
             "meaning the decorated CRS string was silently dropped."
         )
+
+
+# ---------------------------------------------------------------------------
+# TestCleanSupplyValue
+# ---------------------------------------------------------------------------
+
+class TestCleanSupplyValue:
+    def test_positive_value_passes(self):
+        assert clean_supply_value(42.0) == 42.0
+
+    def test_zero_passes(self):
+        assert clean_supply_value(0) == 0.0
+
+    def test_negative_returns_none(self):
+        assert clean_supply_value(-1.5) is None
+
+    def test_none_returns_none(self):
+        assert clean_supply_value(None) is None
+
+    def test_non_numeric_returns_none(self):
+        assert clean_supply_value("not a number") is None
+
+    def test_nan_returns_none(self):
+        assert clean_supply_value(float("nan")) is None
