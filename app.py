@@ -2047,6 +2047,10 @@ def server(input, output, session):
                 return h["name"]
         return pa_config.EUNIS_LOOKUP.get(code, code)
 
+    def _pa_custom_lookup():
+        """Return {code: name} for all custom habitats currently defined."""
+        return {h["code"]: h["name"] for h in pa_custom_habitats.get()}
+
     @output
     @render.ui
     def pa_habitat_assignment_ui():
@@ -2148,7 +2152,10 @@ def server(input, output, session):
 
         unit = input.pa_area_unit()
         crs = original_crs.get()
-        extent_df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs)
+        extent_df = pa_calculations.compute_extent(
+            gdf, assignments, unit=unit, original_crs=crs,
+            custom_lookup=_pa_custom_lookup(),
+        )
 
         if extent_df.empty:
             return ui.p("No extent data computed.", style="color: #6c757d;")
@@ -2171,7 +2178,10 @@ def server(input, output, session):
             return pd.DataFrame()
         unit = input.pa_area_unit()
         crs = original_crs.get()
-        df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs)
+        df = pa_calculations.compute_extent(
+            gdf, assignments, unit=unit, original_crs=crs,
+            custom_lookup=_pa_custom_lookup(),
+        )
         df["area"] = df["area"].round(2)
         df["pct_total"] = df["pct_total"].round(1)
         df.columns = ["EUNIS Code", "Habitat Name", f"Area ({unit})", "% of Total"]
@@ -2305,7 +2315,10 @@ def server(input, output, session):
         unit = input.pa_area_unit()
         crs = original_crs.get()
 
-        extent_df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs) if gdf is not None and assignments else pd.DataFrame()
+        extent_df = pa_calculations.compute_extent(
+            gdf, assignments, unit=unit, original_crs=crs,
+            custom_lookup=_pa_custom_lookup(),
+        ) if gdf is not None and assignments else pd.DataFrame()
 
         selected_benefits = list(input.pa_benefits_select() or [])
         custom_bens = pa_custom_benefits.get()
@@ -2335,7 +2348,10 @@ def server(input, output, session):
         unit = input.pa_area_unit()
         crs = original_crs.get()
 
-        extent_df = pa_calculations.compute_extent(gdf, assignments, unit=unit, original_crs=crs) if gdf is not None and assignments else pd.DataFrame()
+        extent_df = pa_calculations.compute_extent(
+            gdf, assignments, unit=unit, original_crs=crs,
+            custom_lookup=_pa_custom_lookup(),
+        ) if gdf is not None and assignments else pd.DataFrame()
 
         selected_benefits = list(input.pa_benefits_select() or [])
         custom_bens = pa_custom_benefits.get()

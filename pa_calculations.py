@@ -81,6 +81,7 @@ def compute_extent(
     habitat_assignments: dict,
     unit: str = "Ha",
     original_crs=None,
+    custom_lookup: dict | None = None,
 ) -> pd.DataFrame:
     """Compute habitat extent from assigned subzones.
 
@@ -139,7 +140,10 @@ def compute_extent(
     agg.rename(columns={"_area": "area"}, inplace=True)
     total = agg["area"].sum()
     agg["pct_total"] = (agg["area"] / total * 100) if total > 0 else 0.0
-    agg["habitat_name"] = agg["eunis_code"].map(EUNIS_LOOKUP).fillna("Unknown")
+    merged_lookup = dict(EUNIS_LOOKUP)
+    if custom_lookup:
+        merged_lookup.update(custom_lookup)
+    agg["habitat_name"] = agg["eunis_code"].map(merged_lookup).fillna("Unknown")
 
     return agg[["eunis_code", "habitat_name", "area", "pct_total"]].reset_index(drop=True)
 

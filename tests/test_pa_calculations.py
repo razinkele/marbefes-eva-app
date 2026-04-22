@@ -98,6 +98,19 @@ class TestComputeExtent:
         with pytest.raises(ValueError, match="CRS"):
             compute_extent(gdf, {"A": "MB252"}, unit="Ha")
 
+    def test_custom_lookup_overrides_unknown(self):
+        """Custom EUNIS codes not in EUNIS_LOOKUP must be named via custom_lookup."""
+        gdf = _make_test_gdf()
+        assignments = {"Z1": "X99", "Z2": "X99", "Z3": "MC352"}
+        custom_lookup = {"X99": "Custom reef mosaic"}
+        result = compute_extent(
+            gdf, assignments, unit="Ha", custom_lookup=custom_lookup
+        )
+        x99_name = result.loc[result["eunis_code"] == "X99", "habitat_name"].iloc[0]
+        assert x99_name == "Custom reef mosaic", (
+            f"Expected custom name, got {x99_name!r}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # TestAssembleSupplyTable
