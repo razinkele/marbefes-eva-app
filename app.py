@@ -26,6 +26,7 @@ import folium.plugins
 import pa_config
 import pa_calculations
 import pa_export
+import pa_docx
 import eva_visualizations
 import eva_map
 
@@ -2886,6 +2887,47 @@ def server(input, output, session):
             condition=condition, supply=supply, metadata=metadata,
             missing_values=missing,
         )
+
+    @render.download(
+        filename=lambda: f"MARBEFES_BBT8_PhysicalAccounts_{pd.Timestamp.now().strftime('%Y%m%d')}.docx"
+    )
+    def pa_download_bbt8_docx():
+        overlay = eunis_overlay.get()
+        if overlay is None:
+            ui.notification_show("Upload a EUNIS overlay first.", type="warning")
+            return None
+
+        eva = cached_eva_data()
+        if eva is None:
+            ui.notification_show("EVA data not found.", type="error")
+            return None
+
+        unit = input.pa_area_unit()
+        extent = eunis_data.compute_eunis_extent(overlay, unit=unit)
+        condition = eunis_data.compute_eunis_condition(overlay, eva)
+        supply = eunis_data.compute_eunis_supply(overlay, eva)
+        total_area_m2 = float(extent["area_m2"].sum()) if "area_m2" in extent.columns else 0.0
+        missing = eunis_data.build_missing_values(overlay, eva, total_bbt_area_m2=total_area_m2)
+
+        bbt_name = input.pa_eaa_name() or "Ecosystem Accounting Area"
+        metadata = {
+            "bbt_name": bbt_name,
+            "eaa_name": bbt_name,
+            "generated": pd.Timestamp.now().strftime("%Y-%m-%d"),
+            "accounting_year": str(input.pa_accounting_year() or ""),
+        }
+
+        try:
+            return pa_docx.generate_bbt8_docx_report(
+                overlay=overlay, eva=eva,
+                extent=extent, condition=condition,
+                supply=supply, missing=missing,
+                metadata=metadata,
+            )
+        except Exception as exc:
+            logger.exception("DOCX report generation failed")
+            ui.notification_show(f"DOCX report failed: {exc}", type="error", duration=12)
+            return None
 
     @reactive.Effect
     @reactive.event(pa_habitat_assignments)

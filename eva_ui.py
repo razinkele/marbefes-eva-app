@@ -1879,6 +1879,7 @@ app_ui = ui.page_fluid(
                     ui.download_button("pa_download_standalone", "📊 Download PA Report (Excel)", class_="btn-primary", style="width: 100%; margin-top: 1rem;"),
                     ui.download_button("pa_download_combined", "📊 Download Combined EVA+PA (Excel)", class_="btn-secondary", style="width: 100%; margin-top: 0.5rem;"),
                     ui.download_button("pa_download_bbt8", "📋 Download BBT8 Accounts (Excel)", class_="btn-outline-primary", style="width: 100%; margin-top: 0.5rem;"),
+                    ui.download_button("pa_download_bbt8_docx", "📝 Download BBT8 Report (Word)", class_="btn-outline-primary", style="width: 100%; margin-top: 0.5rem;"),
                 ),
                 width=380
             ),
