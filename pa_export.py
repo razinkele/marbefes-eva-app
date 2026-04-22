@@ -458,6 +458,24 @@ def generate_bbt8_workbook(accounts, main_values, extent, condition,
     io.BytesIO
         Excel workbook serialised to a BytesIO buffer, seeked to position 0.
     """
+    # Schema validation — fail loudly with clear messages
+    missing = []
+    if "EUNIS_code" not in extent.columns:
+        missing.append("extent: 'EUNIS_code'")
+    if "area_m2" not in extent.columns and "total_area" not in extent.columns:
+        missing.append("extent: one of 'area_m2' or 'total_area'")
+    if "EUNIS_code" not in accounts.columns:
+        missing.append("accounts: 'EUNIS_code'")
+    if "Subzone_ID" not in main_values.columns:
+        missing.append("main_values: 'Subzone_ID'")
+    if "EUNIS_code" not in main_values.columns:
+        missing.append("main_values: 'EUNIS_code'")
+    if missing:
+        raise ValueError(
+            "generate_bbt8_workbook called with malformed inputs. Missing columns: "
+            + "; ".join(missing)
+        )
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         # ReadMe

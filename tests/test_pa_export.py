@@ -435,3 +435,52 @@ class TestBuildExtentSheet:
         assert total_row[3] == 80.0, (
             f"Expected TOTAL row % = 80.0 (sum of pct_total), got {total_row[3]}"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestGenerateBbt8WorkbookSchema
+# ---------------------------------------------------------------------------
+
+class TestGenerateBbt8WorkbookSchema:
+    def _valid_inputs(self):
+        """Build a minimal set of valid inputs; individual tests mutate one."""
+        extent = pd.DataFrame({"EUNIS_code": ["MB252"], "area_m2": [100.0]})
+        accounts = pd.DataFrame({
+            "EUNIS_code": ["MB252"], "EUNIS_name": ["Posidonia"],
+            "area_m2": [100.0], "Habitat_EV": [0.5], "Confidence": [0.9],
+        })
+        main_values = pd.DataFrame({
+            "Subzone_ID": ["A"], "EUNIS_code": ["MB252"],
+            "Habitat_EV": [0.5], "Habitat_confidence": [0.9],
+        })
+        condition = pd.DataFrame({"EUNIS_code": ["MB252"]})
+        supply = pd.DataFrame({"EUNIS_code": ["MB252"]})
+        return extent, accounts, main_values, condition, supply
+
+    def test_missing_extent_area_column_raises(self):
+        """extent without area_m2 or total_area must raise ValueError."""
+        extent, accounts, main_values, condition, supply = self._valid_inputs()
+        extent = pd.DataFrame({"EUNIS_code": ["MB252"], "something_else": [1]})
+        with pytest.raises(ValueError, match="area_m2"):
+            generate_bbt8_workbook(
+                accounts=accounts, main_values=main_values, extent=extent,
+                condition=condition, supply=supply, metadata={"BBT": "test"},
+            )
+
+    def test_missing_main_values_subzone_id_raises(self):
+        """main_values without Subzone_ID must raise ValueError."""
+        extent, accounts, main_values, condition, supply = self._valid_inputs()
+        main_values = main_values.drop(columns=["Subzone_ID"])
+        with pytest.raises(ValueError, match="Subzone_ID"):
+            generate_bbt8_workbook(
+                accounts=accounts, main_values=main_values, extent=extent,
+                condition=condition, supply=supply, metadata={"BBT": "test"},
+            )
+
+    def test_valid_inputs_do_not_raise(self):
+        """Sanity: valid inputs must not trigger the schema guard."""
+        extent, accounts, main_values, condition, supply = self._valid_inputs()
+        generate_bbt8_workbook(
+            accounts=accounts, main_values=main_values, extent=extent,
+            condition=condition, supply=supply, metadata={"BBT": "test"},
+        )
