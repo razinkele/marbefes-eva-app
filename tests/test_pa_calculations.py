@@ -80,6 +80,24 @@ class TestComputeExtent:
         assert result.empty
         assert list(result.columns) == ["eunis_code", "habitat_name", "area", "pct_total"]
 
+    def test_missing_subzone_id_column_raises(self):
+        """GDF without 'Subzone ID' column should raise a clear ValueError."""
+        gdf = gpd.GeoDataFrame(
+            {"wrong_col": ["A", "B"], "geometry": [box(0, 0, 1, 1), box(1, 0, 2, 1)]},
+            crs="EPSG:4326",
+        )
+        with pytest.raises(ValueError, match="Subzone ID"):
+            compute_extent(gdf, {"A": "MB252"}, unit="Ha")
+
+    def test_missing_crs_raises(self):
+        """GDF with crs=None should raise a clear ValueError, not CRSError."""
+        gdf = gpd.GeoDataFrame(
+            {"Subzone ID": ["A"], "geometry": [box(0, 0, 1, 1)]},
+            crs=None,
+        )
+        with pytest.raises(ValueError, match="CRS"):
+            compute_extent(gdf, {"A": "MB252"}, unit="Ha")
+
 
 # ---------------------------------------------------------------------------
 # TestAssembleSupplyTable

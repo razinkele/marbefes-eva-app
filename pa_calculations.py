@@ -100,6 +100,16 @@ def compute_extent(
     pd.DataFrame
         Columns: ``eunis_code, habitat_name, area, pct_total``.
     """
+    if "Subzone ID" not in gdf.columns:
+        raise ValueError(
+            "GeoDataFrame is missing required 'Subzone ID' column. "
+            "Available columns: " + ", ".join(map(str, gdf.columns))
+        )
+    if gdf.crs is None:
+        raise ValueError(
+            "GeoDataFrame has no CRS defined. Please upload a spatial file "
+            "with a defined coordinate reference system."
+        )
     if not habitat_assignments:
         return pd.DataFrame(columns=["eunis_code", "habitat_name", "area", "pct_total"])
 
