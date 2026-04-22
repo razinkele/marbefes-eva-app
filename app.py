@@ -29,19 +29,16 @@ import pa_export
 import eva_visualizations
 import eva_map
 
-# Import SDM analysis functions (handle various deployment environments)
-import importlib
-import sys as _sys
-_app_dir = os.path.dirname(os.path.abspath(__file__))
-if _app_dir not in _sys.path:
-    _sys.path.insert(0, _app_dir)
-from scripts.sdm_analyse import (
-    compare_predictor_sets,
-    compare_methods,
-    analyse_collinearity,
-    habitat_preference_table,
-    select_species as sdm_select_species,
-)
+def _import_sdm_analyse():
+    """Lazy import of SDM analysis functions (handles deployment sys.path)."""
+    import importlib
+    import sys as _s
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    if app_dir not in _s.path:
+        _s.path.insert(0, app_dir)
+    mod = importlib.import_module("scripts.sdm_analyse")
+    return mod
+
 import eva_hexgrid
 import eva_eunis_wms
 import eva_cmems
@@ -3400,6 +3397,9 @@ def server(input, output, session):
         sdm_analysis_message.set("⏳ Running predictor analysis…")
 
         try:
+            # Lazy import of analysis module
+            _sdm_mod = _import_sdm_analyse()
+
             # Extract covariates at sampling sites
             sites_cov = eva_sdm.extract_covariates_at_sites(
                 data, cov, lat_col=lat_col, lon_col=lon_col
@@ -3417,7 +3417,7 @@ def server(input, output, session):
                                 and pd.api.types.is_numeric_dtype(data[c])]
 
             # Auto-select species across prevalence gradient
-            selected = sdm_select_species(
+            selected = _sdm_mod.select_species(
                 sites_cov, species_list, requested=None,
                 min_prevalence=0.05, max_species=8
             )
@@ -3431,7 +3431,7 @@ def server(input, output, session):
             species_results = {}
             for sp, prev, n_pres in selected:
                 try:
-                    species_results[sp] = compare_predictor_sets(
+                    species_results[sp] = _sdm_mod.compare_predictor_sets(
                         sites_cov, sp, do_cv=False
                     )
                 except Exception as exc:
@@ -3439,14 +3439,14 @@ def server(input, output, session):
 
             # Run collinearity analysis
             sdm_analysis_message.set("⏳ Analysing collinearity…")
-            collinearity = analyse_collinearity(sites_cov)
+            collinearity = _sdm_mod.analyse_collinearity(sites_cov)
 
             # Build habitat preference table
-            hab_pref = habitat_preference_table(sites_cov, selected)
+            hab_pref = _sdm_mod.habitat_preference_table(sites_cov, selected)
 
             # Method comparison on primary species
             sdm_analysis_message.set(f"⏳ Comparing methods for {selected[0][0]}…")
-            method_results = compare_methods(
+            method_results = _sdm_mod.compare_methods(
                 sites_cov, selected[0][0], cov,
                 methods=["rf", "kriging"],
             )
