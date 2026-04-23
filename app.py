@@ -3493,6 +3493,18 @@ def server(input, output, session):
                 except Exception as exc:
                     logger.warning("Predictor analysis failed for %s: %s", sp, exc)
 
+            if not species_results:
+                msg = (
+                    f"SDM predictor analysis failed for all {len(selected)} species — "
+                    "see the server log for per-species errors."
+                )
+                logger.error(msg)
+                ui.notification_show(msg, type="error", duration=15)
+                sdm_analysis_message.set(f"❌ {msg}")
+                # Clear any stale successful-run state so the UI does not show mixed data.
+                sdm_analysis_results.set(None)
+                return
+
             # Run collinearity analysis
             sdm_analysis_message.set("⏳ Analysing collinearity…")
             collinearity = _sdm_mod.analyse_collinearity(sites_cov)
