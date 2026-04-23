@@ -3470,11 +3470,7 @@ def server(input, output, session):
             if dwca_info and "species_list" in dwca_info:
                 species_list = dwca_info["species_list"]
             else:
-                meta_cols = {"lat", "lon", "eventid", "locationid", "site_id",
-                             "station", "date", "depth", "geometry"}
-                species_list = [c for c in data.columns
-                                if c.lower() not in meta_cols
-                                and pd.api.types.is_numeric_dtype(data[c])]
+                species_list = _sdm_mod.filter_species_columns(data)
 
             # Auto-select species across prevalence gradient
             selected = _sdm_mod.select_species(
@@ -3497,6 +3493,18 @@ def server(input, output, session):
                 except Exception as exc:
                     logger.warning("Predictor analysis failed for %s: %s", sp, exc)
 
+            if not species_results:
+                msg = (
+                    f"SDM predictor analysis failed for all {len(selected)} species — "
+                    "see the server log for per-species errors."
+                )
+                logger.error(msg)
+                ui.notification_show(msg, type="error", duration=15)
+                sdm_analysis_message.set(f"❌ {msg}")
+                # Clear any stale successful-run state so the UI does not show mixed data.
+                sdm_analysis_results.set(None)
+                return
+
             # Run collinearity analysis
             sdm_analysis_message.set("⏳ Analysing collinearity…")
             collinearity = _sdm_mod.analyse_collinearity(sites_cov)
@@ -3506,9 +3514,11 @@ def server(input, output, session):
 
             # Method comparison on primary species
             sdm_analysis_message.set(f"⏳ Comparing methods for {selected[0][0]}…")
+            lat_col, lon_col = _sdm_mod.detect_coord_cols(sites_cov)
             method_results = _sdm_mod.compare_methods(
                 sites_cov, selected[0][0], cov,
                 methods=["rf", "kriging"],
+                lat_col=lat_col, lon_col=lon_col,
             )
 
             sdm_analysis_results.set({
