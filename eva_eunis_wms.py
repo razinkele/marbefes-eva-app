@@ -15,6 +15,7 @@ import logging
 import math
 import re
 import ssl
+import time
 import urllib.parse
 import urllib.request
 from typing import Callable, Optional
@@ -133,7 +134,6 @@ def _build_layer_legend(wms_layer: str) -> dict:
         except Exception as exc:
             last_exc = exc
             if attempt < 2:
-                import time
                 time.sleep(2 * (attempt + 1))
     else:
         raise RuntimeError(f"Cannot fetch WMS legend for {wms_layer}: {last_exc}") from last_exc
@@ -195,7 +195,6 @@ def _fetch_wms_tile(
         except Exception as exc:
             last_exc = exc
             if attempt < 2:
-                import time
                 time.sleep(2 * (attempt + 1))
     else:
         raise RuntimeError(

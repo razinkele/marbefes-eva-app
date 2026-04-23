@@ -151,9 +151,11 @@ def _build_extent_sheet(ws, extent_df, unit):
             pct = (area / total_area * 100) if total_area > 0 else 0.0
         ws.append([code, name, round(area, 4), round(pct, 2)])
 
-    # Totals row
+    # Totals row. Explicit skipna=True so NaN entries contribute 0,
+    # matching the per-row NaN -> 0.0 coercion above even if pandas
+    # defaults ever change.
     if "pct_total" in df.columns:
-        total_pct = float(df["pct_total"].sum())
+        total_pct = float(df["pct_total"].sum(skipna=True))
     else:
         total_pct = 100.0 if total_area > 0 else 0.0
     ws.append(["TOTAL", "", round(total_area, 4), round(total_pct, 2)])

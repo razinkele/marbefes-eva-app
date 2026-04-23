@@ -250,10 +250,11 @@ def validate_benefit_names(names: list[str]) -> bool:
 
 
 def clean_supply_value(val) -> float | None:
-    """Return ``val`` as a non-negative float, or None if invalid.
+    """Return ``val`` as a non-negative finite float, or None if invalid.
 
-    Rejects: None, non-numeric strings, NaN, and negative values (a physical
-    supply quantity — tonnes, visitor-days, etc. — cannot be negative).
+    Rejects: None, non-numeric strings, NaN, ±infinity, and negative values.
+    A physical supply quantity (tonnes, visitor-days, etc.) must be a real
+    finite non-negative number.
     """
     if val is None:
         return None
@@ -261,7 +262,7 @@ def clean_supply_value(val) -> float | None:
         out = float(val)
     except (TypeError, ValueError):
         return None
-    if np.isnan(out) or out < 0:
+    if not np.isfinite(out) or out < 0:
         return None
     return out
 

@@ -15,6 +15,7 @@ import pytest
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from pa_config import EUNIS_LOOKUP
 from pa_export import (
     _build_extent_sheet,
     generate_bbt8_workbook,
@@ -389,12 +390,16 @@ class TestBuildExtentSheet:
         ws = wb.active
         _build_extent_sheet(ws, df, unit="Ha")
         rows = list(ws.iter_rows(min_row=2, max_row=3, values_only=True))
-        # Both rows should show the real EUNIS_LOOKUP name, not empty string
-        assert rows[0][1] == "Posidonia oceanica meadows", (
-            f"Empty-string habitat_name should fall back to EUNIS_LOOKUP, got {rows[0][1]!r}"
+        # Assert against the live lookup so the test stays valid if the
+        # reference name is ever edited for casing, whitespace, or
+        # rewording — the behaviour under test is "falls back to
+        # EUNIS_LOOKUP", not "returns any particular string".
+        expected = EUNIS_LOOKUP["MB252"]
+        assert rows[0][1] == expected, (
+            f"Empty-string habitat_name should fall back to EUNIS_LOOKUP['MB252']={expected!r}, got {rows[0][1]!r}"
         )
-        assert rows[1][1] == "Posidonia oceanica meadows", (
-            f"None habitat_name should fall back to EUNIS_LOOKUP, got {rows[1][1]!r}"
+        assert rows[1][1] == expected, (
+            f"None habitat_name should fall back to EUNIS_LOOKUP['MB252']={expected!r}, got {rows[1][1]!r}"
         )
 
     def test_pct_total_from_dataframe_is_preserved(self):
@@ -480,7 +485,11 @@ class TestGenerateBbt8WorkbookSchema:
     def test_valid_inputs_do_not_raise(self):
         """Sanity: valid inputs must not trigger the schema guard."""
         extent, accounts, main_values, condition, supply = self._valid_inputs()
-        generate_bbt8_workbook(
+        buf = generate_bbt8_workbook(
             accounts=accounts, main_values=main_values, extent=extent,
             condition=condition, supply=supply, metadata={"BBT": "test"},
         )
+        # Positive assertion guards against the function silently
+        # swallowing inputs and returning None under future refactors.
+        assert isinstance(buf, io.BytesIO)
+        assert buf.getvalue()[:4] == b"PK\x03\x04"  # xlsx is a zip
