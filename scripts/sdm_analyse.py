@@ -486,13 +486,15 @@ def analyse_collinearity(
     if eunis_col is None:
         return {"error": "No EUNIS column found"}
 
-    # Habitat distribution
-    hab_counts = sites_cov[eunis_col].value_counts().to_dict()
+    # Habitat distribution — drop NaN habitats so iteration and value_counts
+    # do not surface NaN keys to downstream formatters.
+    eunis_series = sites_cov[eunis_col].dropna()
+    hab_counts = eunis_series.value_counts().to_dict()
 
     # Depth by habitat
     depth_by_hab = {}
     if "depth_m" in sites_cov.columns:
-        for h in sorted(sites_cov[eunis_col].unique()):
+        for h in sorted(eunis_series.unique()):
             sub = sites_cov[sites_cov[eunis_col] == h]["depth_m"].dropna()
             depth_by_hab[h] = {
                 "count": len(sub),
