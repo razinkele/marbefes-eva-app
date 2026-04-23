@@ -128,7 +128,14 @@ class TestCompareMethodsCoordCols:
             eunis_cols=[],
             lat_col="latitude", lon_col="longitude",
         )
-        err = results.get("Ordinary Kriging", {}).get("error", "")
+        # compare_methods records failures under either the method name
+        # ("kriging") or the label "Ordinary Kriging" depending on where
+        # in the branch the exception fires. Check both.
+        err = (
+            results.get("Ordinary Kriging", {}).get("error", "")
+            + " "
+            + results.get("kriging", {}).get("error", "")
+        )
         assert "lat" not in err and "lon" not in err, \
             f"coord-name KeyError suggests threading failed: {err!r}"
 
@@ -191,3 +198,18 @@ class TestFilterSpeciesColumns:
             "species":  [1.0],
         })
         assert filter_species_columns(df) == ["species"]
+
+
+class TestHabitatPreferenceTableNaN:
+    def test_nan_habitat_does_not_raise(self):
+        """Same NaN-mix bug as analyse_collinearity, in a different function."""
+        from scripts.sdm_analyse import habitat_preference_table
+        sites = pd.DataFrame({
+            "dominant_EUNIS2019": ["A5.25", np.nan, "A4.4"],
+            "Sprattus sprattus": [1.0, 0.0, 1.0],
+        })
+        species_list = [("Sprattus sprattus", 0.67, 2)]
+        # Before fix: sorted() on NaN+strings raises TypeError
+        out = habitat_preference_table(sites, species_list)
+        # Post-fix: returns a DataFrame with no NaN habitat rows
+        assert isinstance(out, pd.DataFrame)

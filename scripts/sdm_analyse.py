@@ -451,7 +451,10 @@ def compare_methods(
         try:
             if method == "kriging":
                 # Ordinary Kriging — spatial only
-                ok = eva_sdm.fit_kriging(sites_cov, species, variogram_model="spherical")
+                ok = eva_sdm.fit_kriging(
+                    sites_cov, species, variogram_model="spherical",
+                    lat_col=lat_col, lon_col=lon_col,
+                )
                 preds, unc = eva_sdm.predict_grid(
                     grid_gdf=covariates, predictor_cols=[],
                     kriging_model=ok, method="kriging",
@@ -506,7 +509,10 @@ def compare_methods(
                         residuals = y - rf.predict(X)
                         valid = _align_valid_for_residuals(sites_cov, cols, species)
                         valid["__resid__"] = residuals
-                        rk = eva_sdm.fit_kriging(valid, "__resid__", variogram_model="spherical")
+                        rk = eva_sdm.fit_kriging(
+                            valid, "__resid__", variogram_model="spherical",
+                            lat_col=lat_col, lon_col=lon_col,
+                        )
 
                         preds, unc = eva_sdm.predict_grid(
                             grid_gdf=covariates, predictor_cols=cols,
@@ -612,7 +618,7 @@ def habitat_preference_table(
     if eunis_col is None:
         return pd.DataFrame()
 
-    habitats = sorted(sites_cov[eunis_col].unique())
+    habitats = sorted(sites_cov[eunis_col].dropna().unique())
     rows = []
     for sp, prev, n_pres in species_list:
         row = {"Species": sp, "Prevalence": f"{prev:.0%}"}
