@@ -8,6 +8,7 @@ import os
 import sys
 import io
 from datetime import datetime
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -19,6 +20,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+from version import __version__ as APP_VERSION  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -415,7 +421,7 @@ def generate_html_report(overlay, eva, extent, condition, supply, accounts, miss
 </div>
 
 <div class="footer">
-  MARBEFES — EU Horizon Europe | EVA v3.4.0 | {now}
+  MARBEFES — EU Horizon Europe | EVA v{APP_VERSION} | {now}
 </div>
 </div>
 </body>
@@ -579,7 +585,7 @@ def generate_docx_report(overlay, eva, extent, condition, supply, accounts, miss
     section = doc.sections[0]
     footer = section.footer
     p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
-    p.text = f"MARBEFES Physical Accounts (BBT8) — Lithuanian BBT5 | {now} | EVA v3.4.0"
+    p.text = f"MARBEFES Physical Accounts (BBT8) — Lithuanian BBT5 | {now} | EVA v{APP_VERSION}"
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     for r in p.runs: r.font.size = Pt(8); r.font.color.rgb = RGBColor(108,117,125)
 
@@ -612,7 +618,7 @@ def generate_bbt8_excel(overlay, eva, extent, condition, supply, accounts, missi
         "Framework": "SEEA EA / MARBEFES WP4",
         "Generated": datetime.now().strftime("%Y-%m-%d"),
         "EUNIS Source": "EMODnet EUSeaMap 2023",
-        "EVA Version": "MARBEFES EVA v3.4.0",
+        "EVA Version": f"MARBEFES EVA v{APP_VERSION}",
         "Contact": "Klaipeda University / MARBEFES",
     }
 

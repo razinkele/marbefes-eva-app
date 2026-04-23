@@ -9,6 +9,7 @@ Produces:
 import logging
 import os
 import sys
+from pathlib import Path
 
 import geopandas as gpd
 import numpy as np
@@ -16,6 +17,13 @@ import pandas as pd
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+
+# Make project root importable so we can read the single source of truth for
+# the application version.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+from version import __version__ as APP_VERSION  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -274,7 +282,7 @@ def write_pa_report(extent, condition_simple, condition_detailed, supply):
                 "",
                 "",
                 "HELCOM HUB L3 / EUNIS L2 (Lithuanian EPA, 2019)",
-                "MARBEFES EVA v3.3 (corrected dataset, Sept 2025)",
+                f"MARBEFES EVA v{APP_VERSION} (corrected dataset, Sept 2025)",
                 "ICES BITS + Lithuanian EPA commercial catch (2000-2023)",
                 "",
                 "Franco A. & Amorim E. (2025) EVA Guidance. MARBEFES WP4.1",
