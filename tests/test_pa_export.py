@@ -15,7 +15,13 @@ import pytest
 # Ensure project root is on sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from pa_export import generate_pa_workbook, generate_combined_workbook, generate_bbt8_workbook
+from pa_config import EUNIS_LOOKUP
+from pa_export import (
+    _build_extent_sheet,
+    generate_bbt8_workbook,
+    generate_combined_workbook,
+    generate_pa_workbook,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +353,143 @@ class TestGenerateBBT8Workbook:
         # Header row
         assert ws.cell(row=1, column=1).value == "EUNIS2019C"
         assert ws.cell(row=1, column=2).value == "Sum of area"
+
+
+# ---------------------------------------------------------------------------
+# TestBuildExtentSheet
+# ---------------------------------------------------------------------------
+
+class TestBuildExtentSheet:
+    def test_custom_habitat_name_preserved(self):
+        """Custom habitat names (not in EUNIS_LOOKUP) must survive export."""
+        df = pd.DataFrame({
+            "eunis_code":   ["X99"],
+            "habitat_name": ["Custom reef mosaic"],
+            "area":         [42.0],
+            "pct_total":    [100.0],
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        data_row = list(ws.iter_rows(min_row=2, max_row=2, values_only=True))[0]
+        # Columns: EUNIS Code, Habitat Name, Area (Ha), % of Total
+        assert data_row[0] == "X99"
+        assert data_row[1] == "Custom reef mosaic", (
+            f"Expected custom name, got {data_row[1]!r}"
+        )
+
+    def test_empty_habitat_name_falls_back_to_lookup(self):
+        """If habitat_name is empty/NaN for a real EUNIS code, fall back to lookup."""
+        df = pd.DataFrame({
+            "eunis_code":   ["MB252", "MB252"],
+            "habitat_name": ["", None],  # both empty — CSV round-trip scenarios
+            "area":         [10.0, 20.0],
+            "pct_total":    [33.3, 66.7],
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        rows = list(ws.iter_rows(min_row=2, max_row=3, values_only=True))
+        # Assert against the live lookup so the test stays valid if the
+        # reference name is ever edited for casing, whitespace, or
+        # rewording — the behaviour under test is "falls back to
+        # EUNIS_LOOKUP", not "returns any particular string".
+        expected = EUNIS_LOOKUP["MB252"]
+        assert rows[0][1] == expected, (
+            f"Empty-string habitat_name should fall back to EUNIS_LOOKUP['MB252']={expected!r}, got {rows[0][1]!r}"
+        )
+        assert rows[1][1] == expected, (
+            f"None habitat_name should fall back to EUNIS_LOOKUP['MB252']={expected!r}, got {rows[1][1]!r}"
+        )
+
+    def test_pct_total_from_dataframe_is_preserved(self):
+        """If DataFrame carries pct_total, exporter must use it — not recompute.
+
+        Fixture choice: areas 1.0 and 2.0 would yield recomputed percentages
+        of 33.33 and 66.67. We deliberately override pct_total to 50.0/50.0
+        so the test fails before the fix and passes after.
+        """
+        df = pd.DataFrame({
+            "eunis_code":   ["A",   "B"],
+            "habitat_name": ["Alpha", "Beta"],
+            "area":         [1.0,   2.0],
+            "pct_total":    [50.0,  50.0],  # override, NOT matching area ratio
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        rows = list(ws.iter_rows(min_row=2, max_row=3, values_only=True))
+        # % column is index 3
+        assert rows[0][3] == 50.0, f"Expected 50.0 (from pct_total), got {rows[0][3]}"
+        assert rows[1][3] == 50.0, f"Expected 50.0 (from pct_total), got {rows[1][3]}"
+
+    def test_total_row_reflects_actual_pct_sum(self):
+        """TOTAL row % must equal sum of pct_total, not the hardcoded 100.0."""
+        df = pd.DataFrame({
+            "eunis_code":   ["A",   "B"],
+            "habitat_name": ["Alpha", "Beta"],
+            "area":         [1.0,   1.0],
+            "pct_total":    [40.0,  40.0],  # partial coverage — sums to 80
+        })
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        _build_extent_sheet(ws, df, unit="Ha")
+        # TOTAL row is row 4 (header=1, A=2, B=3, TOTAL=4)
+        total_row = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
+        assert total_row[0] == "TOTAL"
+        assert total_row[3] == 80.0, (
+            f"Expected TOTAL row % = 80.0 (sum of pct_total), got {total_row[3]}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestGenerateBbt8WorkbookSchema
+# ---------------------------------------------------------------------------
+
+class TestGenerateBbt8WorkbookSchema:
+    def _valid_inputs(self):
+        """Build a minimal set of valid inputs; individual tests mutate one."""
+        extent = pd.DataFrame({"EUNIS_code": ["MB252"], "area_m2": [100.0]})
+        accounts = pd.DataFrame({
+            "EUNIS_code": ["MB252"], "EUNIS_name": ["Posidonia"],
+            "area_m2": [100.0], "Habitat_EV": [0.5], "Confidence": [0.9],
+        })
+        main_values = pd.DataFrame({
+            "Subzone_ID": ["A"], "EUNIS_code": ["MB252"],
+            "Habitat_EV": [0.5], "Habitat_confidence": [0.9],
+        })
+        condition = pd.DataFrame({"EUNIS_code": ["MB252"]})
+        supply = pd.DataFrame({"EUNIS_code": ["MB252"]})
+        return extent, accounts, main_values, condition, supply
+
+    def test_missing_extent_area_column_raises(self):
+        """extent without area_m2 or total_area must raise ValueError."""
+        extent, accounts, main_values, condition, supply = self._valid_inputs()
+        extent = pd.DataFrame({"EUNIS_code": ["MB252"], "something_else": [1]})
+        with pytest.raises(ValueError, match="area_m2"):
+            generate_bbt8_workbook(
+                accounts=accounts, main_values=main_values, extent=extent,
+                condition=condition, supply=supply, metadata={"BBT": "test"},
+            )
+
+    def test_missing_main_values_subzone_id_raises(self):
+        """main_values without Subzone_ID must raise ValueError."""
+        extent, accounts, main_values, condition, supply = self._valid_inputs()
+        main_values = main_values.drop(columns=["Subzone_ID"])
+        with pytest.raises(ValueError, match="Subzone_ID"):
+            generate_bbt8_workbook(
+                accounts=accounts, main_values=main_values, extent=extent,
+                condition=condition, supply=supply, metadata={"BBT": "test"},
+            )
+
+    def test_valid_inputs_do_not_raise(self):
+        """Sanity: valid inputs must not trigger the schema guard."""
+        extent, accounts, main_values, condition, supply = self._valid_inputs()
+        buf = generate_bbt8_workbook(
+            accounts=accounts, main_values=main_values, extent=extent,
+            condition=condition, supply=supply, metadata={"BBT": "test"},
+        )
+        # Positive assertion guards against the function silently
+        # swallowing inputs and returning None under future refactors.
+        assert isinstance(buf, io.BytesIO)
+        assert buf.getvalue()[:4] == b"PK\x03\x04"  # xlsx is a zip

@@ -1879,6 +1879,7 @@ app_ui = ui.page_fluid(
                     ui.download_button("pa_download_standalone", "📊 Download PA Report (Excel)", class_="btn-primary", style="width: 100%; margin-top: 1rem;"),
                     ui.download_button("pa_download_combined", "📊 Download Combined EVA+PA (Excel)", class_="btn-secondary", style="width: 100%; margin-top: 0.5rem;"),
                     ui.download_button("pa_download_bbt8", "📋 Download BBT8 Accounts (Excel)", class_="btn-outline-primary", style="width: 100%; margin-top: 0.5rem;"),
+                    ui.download_button("pa_download_bbt8_docx", "📝 Download BBT8 Report (Word)", class_="btn-outline-primary", style="width: 100%; margin-top: 0.5rem;"),
                 ),
                 width=380
             ),
@@ -2020,54 +2021,81 @@ app_ui = ui.page_fluid(
                 ui.input_text("sdm_lon_col", "Longitude column", value="lon", width="100%"),
 
                 ui.hr(),
+                ui.input_action_button("sdm_analyse_btn", "🔬 Analyse Predictors",
+                                       class_="btn btn-info w-100 mb-2",
+                                       icon=ui.tags.i(class_="bi bi-bar-chart-line")),
                 ui.input_action_button("sdm_fit_btn", "Fit & Predict",
                                        class_="btn btn-success w-100",
                                        icon=ui.tags.i(class_="bi bi-play-fill")),
                 ui.br(),
                 ui.output_ui("sdm_fit_status"),
+                ui.output_ui("sdm_analyse_status"),
 
                 width=310,
             ),
             # Main content — map + diagnostics
             ui.div(
-                ui.navset_tab(
-                    ui.nav_panel("📋 Data Analysis",
-                        ui.div(
-                            ui.output_ui("sdm_data_analysis"),
-                            style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                # CSS for compact SDM tabs
+                ui.tags.style("""
+                    #sdm_tabs .nav-tabs { flex-wrap: wrap; gap: 2px 0; }
+                    #sdm_tabs .nav-tabs .nav-link {
+                        font-size: 0.78rem; padding: 0.35rem 0.6rem;
+                        white-space: nowrap;
+                    }
+                    #sdm_tabs .nav-tabs .nav-link.active {
+                        font-weight: 600; border-bottom: 2px solid #006994;
+                        color: #006994;
+                    }
+                """),
+                ui.div(
+                    ui.navset_tab(
+                        ui.nav_panel("📋 Data",
+                            ui.div(
+                                ui.output_ui("sdm_data_analysis"),
+                                style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                            ),
                         ),
-                    ),
-                    ui.nav_panel("🗺️ Predicted Distribution",
-                        ui.output_ui("sdm_map_output"),
-                    ),
-                    ui.nav_panel("🎯 Uncertainty",
-                        ui.div(
-                            ui.p("Kriging variance or GP standard deviation — "
-                                 "lower values indicate more confident predictions.",
-                                 style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
-                            ui.output_ui("sdm_uncertainty_map_output"),
+                        ui.nav_panel("🔬 Predictors",
+                            ui.div(
+                                ui.output_ui("sdm_predictor_analysis"),
+                                style="padding:0.5rem;max-height:calc(100vh - 200px);overflow-y:auto;"
+                            ),
                         ),
-                    ),
-                    ui.nav_panel("📊 Diagnostics",
-                        ui.div(
-                            ui.output_ui("sdm_diagnostics_output"),
-                            style="padding:1rem;"
+                        ui.nav_panel("🗺️ Map",
+                            ui.output_ui("sdm_map_output"),
                         ),
-                    ),
-                    ui.nav_panel("📉 Variogram",
-                        ui.div(
-                            ui.p("Empirical and fitted variogram for Kriging-based methods.",
-                                 style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
-                            ui.output_ui("sdm_variogram_output"),
-                            style="padding:0.5rem;"
+                        ui.nav_panel("🎯 Uncertainty",
+                            ui.div(
+                                ui.p("Kriging variance or GP standard deviation — "
+                                     "lower values indicate more confident predictions.",
+                                     style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
+                                ui.output_ui("sdm_uncertainty_map_output"),
+                            ),
                         ),
-                    ),
-                    ui.nav_panel("📋 Partial Effects (GAM)",
-                        ui.div(
-                            ui.output_ui("sdm_partial_effects_output"),
-                            style="padding:1rem;"
+                        ui.nav_panel("📊 Diagnostics",
+                            ui.div(
+                                ui.output_ui("sdm_diagnostics_output"),
+                                style="padding:1rem;"
+                            ),
                         ),
+                        ui.nav_panel("📉 Variogram",
+                            ui.div(
+                                ui.p("Empirical and fitted variogram for Kriging-based methods.",
+                                     style="font-size:0.82rem;color:#666;padding:0.5rem 1rem 0;"),
+                                ui.output_ui("sdm_variogram_output"),
+                                style="padding:0.5rem;"
+                            ),
+                        ),
+                        ui.nav_panel("📋 GAM Effects",
+                            ui.div(
+                                ui.output_ui("sdm_partial_effects_output"),
+                                style="padding:1rem;"
+                            ),
+                        ),
+                        id="sdm_tabs",
                     ),
+                    id="sdm_tabs",
+                    style="height:100%;"
                 ),
                 style="height:100%;"
             ),
