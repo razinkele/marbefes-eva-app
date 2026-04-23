@@ -3,7 +3,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from scripts.sdm_analyse import analyse_collinearity, _align_valid_for_residuals, detect_coord_cols
+from scripts.sdm_analyse import (
+    analyse_collinearity,
+    _align_valid_for_residuals,
+    detect_coord_cols,
+    filter_species_columns,
+)
 
 
 class TestAnalyseCollinearityNaN:
@@ -156,3 +161,33 @@ class TestDetectCoordCols:
         lat, lon = detect_coord_cols(df)
         assert lat == "lAtItUdE"
         assert lon == "lOngItUdE"
+
+
+class TestFilterSpeciesColumns:
+    def test_excludes_dwca_coord_aliases(self):
+        df = pd.DataFrame({
+            "decimalLatitude":  [55.1, 55.2],
+            "decimalLongitude": [20.1, 20.2],
+            "eventID":          ["e1", "e2"],
+            "depth_m":          [10.0, 20.0],
+            "Sprattus sprattus": [0.5, 0.8],
+            "Clupea harengus":   [0.1, 0.2],
+        })
+        cols = filter_species_columns(df)
+        assert set(cols) == {"Sprattus sprattus", "Clupea harengus"}
+
+    def test_case_insensitive(self):
+        df = pd.DataFrame({
+            "LATITUDE":  [55.1, 55.2],
+            "longitude": [20.1, 20.2],
+            "species_A": [1.0, 2.0],
+        })
+        assert filter_species_columns(df) == ["species_A"]
+
+    def test_keeps_numeric_only(self):
+        df = pd.DataFrame({
+            "lat":      [55.1],
+            "notes":    ["a text field"],
+            "species":  [1.0],
+        })
+        assert filter_species_columns(df) == ["species"]
