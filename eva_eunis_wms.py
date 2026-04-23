@@ -15,6 +15,7 @@ import logging
 import math
 import re
 import ssl
+import time
 import urllib.parse
 import urllib.request
 from typing import Callable, Optional
@@ -124,11 +125,18 @@ def _build_layer_legend(wms_layer: str) -> dict:
     }
     url = EUSM_WMS_URL + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "MARBEFES-EVA/1.0"})
-    try:
-        raw = urllib.request.urlopen(req, context=_SSL_CTX, timeout=20).read()
-        legend_data = json.loads(raw)
-    except Exception as exc:
-        raise RuntimeError(f"Cannot fetch WMS legend for {wms_layer}: {exc}") from exc
+    last_exc = None
+    for attempt in range(3):
+        try:
+            raw = urllib.request.urlopen(req, context=_SSL_CTX, timeout=30).read()
+            legend_data = json.loads(raw)
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+    else:
+        raise RuntimeError(f"Cannot fetch WMS legend for {wms_layer}: {last_exc}") from last_exc
 
     rules = legend_data.get("Legend", [{}])[0].get("rules", [])
     color_map: dict = {}
@@ -167,22 +175,31 @@ def _fetch_wms_tile(
     wms_layer: str = EUSM_LAYER,
 ) -> np.ndarray:
     """Fetch one WMS GetMap PNG tile; return RGBA numpy array (H × W × 4, uint8)."""
+    # WMS 1.3.0 with EPSG:4326 requires BBOX in lat/lon order (y1,x1,y2,x2).
+    # CRS:84 (lon/lat order) causes timeouts on EMODnet GeoServer.
     params = {
         "SERVICE": "WMS", "VERSION": "1.3.0", "REQUEST": "GetMap",
         "LAYERS": wms_layer, "STYLES": "",
         "FORMAT": "image/png", "TRANSPARENT": "true",
         "WIDTH": str(_TILE_PX), "HEIGHT": str(_TILE_PX),
-        "CRS": "CRS:84",
-        "BBOX": f"{lon0},{lat0},{lon1},{lat1}",
+        "CRS": "EPSG:4326",
+        "BBOX": f"{lat0},{lon0},{lat1},{lon1}",
     }
     url = EUSM_WMS_URL + "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={"User-Agent": "MARBEFES-EVA/1.0"})
-    try:
-        raw = urllib.request.urlopen(req, context=_SSL_CTX, timeout=30).read()
-    except Exception as exc:
+    last_exc = None
+    for attempt in range(3):
+        try:
+            raw = urllib.request.urlopen(req, context=_SSL_CTX, timeout=45).read()
+            break
+        except Exception as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+    else:
         raise RuntimeError(
-            f"WMS tile failed for {wms_layer} ({lon0},{lat0},{lon1},{lat1}): {exc}"
-        ) from exc
+            f"WMS tile failed for {wms_layer} ({lon0},{lat0},{lon1},{lat1}): {last_exc}"
+        ) from last_exc
     img = Image.open(io.BytesIO(raw)).convert("RGBA")
     return np.array(img)
 

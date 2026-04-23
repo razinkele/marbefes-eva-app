@@ -135,13 +135,30 @@ def _build_extent_sheet(ws, extent_df, unit):
 
     for _, row in df.iterrows():
         code = str(row[code_col]) if code_col else ""
-        name = EUNIS_LOOKUP.get(code, "")
+        if "habitat_name" in df.columns:
+            name_raw = row["habitat_name"]
+            if pd.isna(name_raw) or not str(name_raw).strip():
+                name = EUNIS_LOOKUP.get(code, "")
+            else:
+                name = str(name_raw)
+        else:
+            name = EUNIS_LOOKUP.get(code, "")
         area = float(row[area_col]) if area_col else 0.0
-        pct = (area / total_area * 100) if total_area > 0 else 0.0
+        if "pct_total" in df.columns:
+            pct_raw = row["pct_total"]
+            pct = float(pct_raw) if not pd.isna(pct_raw) else 0.0
+        else:
+            pct = (area / total_area * 100) if total_area > 0 else 0.0
         ws.append([code, name, round(area, 4), round(pct, 2)])
 
-    # Totals row
-    ws.append(["TOTAL", "", round(total_area, 4), 100.0])
+    # Totals row. Explicit skipna=True so NaN entries contribute 0,
+    # matching the per-row NaN -> 0.0 coercion above even if pandas
+    # defaults ever change.
+    if "pct_total" in df.columns:
+        total_pct = float(df["pct_total"].sum(skipna=True))
+    else:
+        total_pct = 100.0 if total_area > 0 else 0.0
+    ws.append(["TOTAL", "", round(total_area, 4), round(total_pct, 2)])
 
 
 def _build_supply_sheet(ws, supply_df):
@@ -443,6 +460,24 @@ def generate_bbt8_workbook(accounts, main_values, extent, condition,
     io.BytesIO
         Excel workbook serialised to a BytesIO buffer, seeked to position 0.
     """
+    # Schema validation — fail loudly with clear messages
+    missing = []
+    if "EUNIS_code" not in extent.columns:
+        missing.append("extent: 'EUNIS_code'")
+    if "area_m2" not in extent.columns and "total_area" not in extent.columns:
+        missing.append("extent: one of 'area_m2' or 'total_area'")
+    if "EUNIS_code" not in accounts.columns:
+        missing.append("accounts: 'EUNIS_code'")
+    if "Subzone_ID" not in main_values.columns:
+        missing.append("main_values: 'Subzone_ID'")
+    if "EUNIS_code" not in main_values.columns:
+        missing.append("main_values: 'EUNIS_code'")
+    if missing:
+        raise ValueError(
+            "generate_bbt8_workbook called with malformed inputs. Missing columns: "
+            + "; ".join(missing)
+        )
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         # ReadMe

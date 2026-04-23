@@ -1,12 +1,26 @@
-"""Shared configuration for EVA_FINAL data repair pipeline."""
-import os
+"""Shared configuration for EVA_FINAL data repair pipeline.
 
-EVA_FINAL_DIR = os.path.normpath(
-    r"C:\Users\DELL\OneDrive - ku.lt\HORIZON_EUROPE\MARBEFES\EVA_FINAL"
-)
-OUTPUT_DIR = os.path.normpath(
-    r"C:\Users\DELL\OneDrive - ku.lt\HORIZON_EUROPE\MARBEFES\EVA_FINAL_corrected"
-)
+Paths resolve in this order:
+  1. Environment variable (``EVA_FINAL_DIR`` / ``EVA_FINAL_CORRECTED_DIR``)
+  2. A sibling of the project root (``<repo>/../EVA_FINAL`` and
+     ``<repo>/../EVA_FINAL_corrected``), matching the layout used by
+     ``scripts/generate_pa_lt_report.py``.
+"""
+import os
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve(env_var: str, sibling_name: str) -> str:
+    override = os.environ.get(env_var)
+    if override:
+        return os.path.normpath(override)
+    return os.path.normpath(str(_PROJECT_ROOT.parent / sibling_name))
+
+
+EVA_FINAL_DIR = _resolve("EVA_FINAL_DIR", "EVA_FINAL")
+OUTPUT_DIR = _resolve("EVA_FINAL_CORRECTED_DIR", "EVA_FINAL_corrected")
 TARGET_CRS = "EPSG:3346"
 SENTINEL_THRESHOLD = -9998
 EVA_SCALE_MIN = 0

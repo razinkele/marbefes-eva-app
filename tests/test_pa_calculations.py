@@ -15,8 +15,10 @@ import geopandas as gpd
 
 from pa_calculations import (
     assemble_supply_table,
+    clean_supply_value,
     compute_extent,
     detect_habitat_column,
+    reproject_to_metric,
     validate_benefit_names,
     validate_completeness,
 )
@@ -78,6 +80,37 @@ class TestComputeExtent:
         result = compute_extent(gdf, {}, unit="Ha")
         assert result.empty
         assert list(result.columns) == ["eunis_code", "habitat_name", "area", "pct_total"]
+
+    def test_missing_subzone_id_column_raises(self):
+        """GDF without 'Subzone ID' column should raise a clear ValueError."""
+        gdf = gpd.GeoDataFrame(
+            {"wrong_col": ["A", "B"], "geometry": [box(0, 0, 1, 1), box(1, 0, 2, 1)]},
+            crs="EPSG:4326",
+        )
+        with pytest.raises(ValueError, match="Subzone ID"):
+            compute_extent(gdf, {"A": "MB252"}, unit="Ha")
+
+    def test_missing_crs_raises(self):
+        """GDF with crs=None should raise a clear ValueError, not CRSError."""
+        gdf = gpd.GeoDataFrame(
+            {"Subzone ID": ["A"], "geometry": [box(0, 0, 1, 1)]},
+            crs=None,
+        )
+        with pytest.raises(ValueError, match="CRS"):
+            compute_extent(gdf, {"A": "MB252"}, unit="Ha")
+
+    def test_custom_lookup_overrides_unknown(self):
+        """Custom EUNIS codes not in EUNIS_LOOKUP must be named via custom_lookup."""
+        gdf = _make_test_gdf()
+        assignments = {"Z1": "X99", "Z2": "X99", "Z3": "MC352"}
+        custom_lookup = {"X99": "Custom reef mosaic"}
+        result = compute_extent(
+            gdf, assignments, unit="Ha", custom_lookup=custom_lookup
+        )
+        x99_name = result.loc[result["eunis_code"] == "X99", "habitat_name"].iloc[0]
+        assert x99_name == "Custom reef mosaic", (
+            f"Expected custom name, got {x99_name!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -156,3 +189,51 @@ class TestBenefitNameValidation:
 
     def test_duplicate_names(self):
         assert validate_benefit_names(["A", "B", "A"]) is False
+
+
+# ---------------------------------------------------------------------------
+# TestReprojectToMetric
+# ---------------------------------------------------------------------------
+
+class TestReprojectToMetric:
+    def test_decorated_epsg_string_is_parsed(self):
+        """Decorated `"EPSG:#### (description)"` must be parsed, not silently dropped.
+
+        Fixture choice: `_make_test_gdf` is centered in UTM zone 33N, so the
+        UTM auto-detect fallback returns EPSG:32633. We deliberately pass a
+        DECORATED string for EPSG:3035 (ETRS89-LAEA Europe) which pyproj
+        cannot parse raw. Before the fix: parse fails → UTM auto-detect →
+        32633. After the fix: regex extracts 3035 → from_epsg → 3035.
+        """
+        gdf = _make_test_gdf()  # WGS-84 GeoDataFrame, centroid in UTM 33N
+        decorated = "EPSG:3035 (ETRS89 / LAEA Europe)"
+        out = reproject_to_metric(gdf, original_crs=decorated)
+        assert out.crs.to_epsg() == 3035, (
+            f"Expected EPSG:3035 (regex-extracted from decorated string), "
+            f"got {out.crs.to_epsg()} — likely UTM auto-detect fallback, "
+            "meaning the decorated CRS string was silently dropped."
+        )
+
+
+# ---------------------------------------------------------------------------
+# TestCleanSupplyValue
+# ---------------------------------------------------------------------------
+
+class TestCleanSupplyValue:
+    def test_positive_value_passes(self):
+        assert clean_supply_value(42.0) == 42.0
+
+    def test_zero_passes(self):
+        assert clean_supply_value(0) == 0.0
+
+    def test_negative_returns_none(self):
+        assert clean_supply_value(-1.5) is None
+
+    def test_none_returns_none(self):
+        assert clean_supply_value(None) is None
+
+    def test_non_numeric_returns_none(self):
+        assert clean_supply_value("not a number") is None
+
+    def test_nan_returns_none(self):
+        assert clean_supply_value(float("nan")) is None

@@ -6,6 +6,7 @@ and validation.  No Shiny / UI dependencies.
 """
 
 import logging
+import re
 
 import geopandas as gpd
 import numpy as np
@@ -34,12 +35,27 @@ def reproject_to_metric(gdf: gpd.GeoDataFrame, original_crs=None) -> gpd.GeoData
     3. Fallback to EPSG:3857 with a logged warning.
     """
     if original_crs is not None:
+        crs_obj = None
         try:
             crs_obj = pyproj.CRS.from_user_input(original_crs)
-            if crs_obj.is_projected:
-                return gdf.to_crs(crs_obj)
         except Exception:
-            logger.warning("Could not parse original_crs=%r; falling back to auto-detect.", original_crs)
+            # Extract EPSG:#### from decorated strings like "EPSG:32633 (UTM zone 33N)"
+            match = re.search(r"EPSG:(\d+)", str(original_crs))
+            if match:
+                try:
+                    crs_obj = pyproj.CRS.from_epsg(int(match.group(1)))
+                except Exception:
+                    logger.warning(
+                        "Could not parse original_crs=%r; falling back to auto-detect.",
+                        original_crs,
+                    )
+            else:
+                logger.warning(
+                    "Could not parse original_crs=%r; falling back to auto-detect.",
+                    original_crs,
+                )
+        if crs_obj is not None and crs_obj.is_projected:
+            return gdf.to_crs(crs_obj)
 
     try:
         bounds = gdf.total_bounds  # minx, miny, maxx, maxy
@@ -65,6 +81,7 @@ def compute_extent(
     habitat_assignments: dict,
     unit: str = "Ha",
     original_crs=None,
+    custom_lookup: dict | None = None,
 ) -> pd.DataFrame:
     """Compute habitat extent from assigned subzones.
 
@@ -84,6 +101,16 @@ def compute_extent(
     pd.DataFrame
         Columns: ``eunis_code, habitat_name, area, pct_total``.
     """
+    if "Subzone ID" not in gdf.columns:
+        raise ValueError(
+            "GeoDataFrame is missing required 'Subzone ID' column. "
+            "Available columns: " + ", ".join(map(str, gdf.columns))
+        )
+    if gdf.crs is None:
+        raise ValueError(
+            "GeoDataFrame has no CRS defined. Please upload a spatial file "
+            "with a defined coordinate reference system."
+        )
     if not habitat_assignments:
         return pd.DataFrame(columns=["eunis_code", "habitat_name", "area", "pct_total"])
 
@@ -113,7 +140,10 @@ def compute_extent(
     agg.rename(columns={"_area": "area"}, inplace=True)
     total = agg["area"].sum()
     agg["pct_total"] = (agg["area"] / total * 100) if total > 0 else 0.0
-    agg["habitat_name"] = agg["eunis_code"].map(EUNIS_LOOKUP).fillna("Unknown")
+    merged_lookup = dict(EUNIS_LOOKUP)
+    if custom_lookup:
+        merged_lookup.update(custom_lookup)
+    agg["habitat_name"] = agg["eunis_code"].map(merged_lookup).fillna("Unknown")
 
     return agg[["eunis_code", "habitat_name", "area", "pct_total"]].reset_index(drop=True)
 
@@ -219,20 +249,26 @@ def validate_benefit_names(names: list[str]) -> bool:
     return len(names) == len(set(names))
 
 
-# ---------------------------------------------------------------------------
-# TODO stubs — reserved for future implementation
-# ---------------------------------------------------------------------------
+def clean_supply_value(val) -> float | None:
+    """Return ``val`` as a non-negative finite float, or None if invalid.
 
-def compute_use_table(supply_data, sector_allocations):
-    """Compute the ecosystem-service use table (not yet implemented)."""
-    raise NotImplementedError("compute_use_table is not yet implemented")
+    Rejects: None, non-numeric strings, NaN, ±infinity, and negative values.
+    A physical supply quantity (tonnes, visitor-days, etc.) must be a real
+    finite non-negative number.
+    """
+    if val is None:
+        return None
+    try:
+        out = float(val)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(out) or out < 0:
+        return None
+    return out
 
 
-def compute_condition_account(condition_data):
-    """Compute the ecosystem condition account (not yet implemented)."""
-    raise NotImplementedError("compute_condition_account is not yet implemented")
-
-
-def compute_extent_changes(opening_extent, closing_extent):
-    """Compute extent change account (not yet implemented)."""
-    raise NotImplementedError("compute_extent_changes is not yet implemented")
+# Deferred SEEA EA accounts (use table, condition account, extent-change
+# account) are not implemented here. The one working flow — per-habitat
+# condition from the EUNIS + EVA join — lives in
+# `scripts/compute_physical_accounts.py`. See
+# `docs/plans/2026-03-16-physical-accounts-plan.md` for the intended API.
