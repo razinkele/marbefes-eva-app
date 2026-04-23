@@ -138,9 +138,11 @@ def load_inputs():
     eva = gpd.read_file(str(eva_path))
     logger.info("    %d features (CRS %s)", len(eva), eva.crs)
 
-    assert overlay.crs == eva.crs, (
-        f"CRS mismatch: overlay={overlay.crs} vs eva={eva.crs}"
-    )
+    if overlay.crs != eva.crs:
+        raise ValueError(
+            f"CRS mismatch: overlay={overlay.crs} vs eva={eva.crs}. "
+            "Reproject one before calling spatial_join_eva_to_hexes()."
+        )
     return overlay, eva
 
 

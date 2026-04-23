@@ -239,8 +239,8 @@ def build_narrative_md(
     """Produce the Markdown narrative for the PA report."""
     bbt_name = metadata.get("bbt_name") or metadata.get("eaa_name") or "Ecosystem Accounting Area"
     generated = metadata.get("generated") or datetime.now().strftime("%Y-%m-%d")
-    total_area_ha_col = "total_area" if "total_area" in extent.columns else "area_Ha"
-    total_area_ha = float(extent[total_area_ha_col].sum()) if not extent.empty else 0.0
+    total_area_ha = _extent_total_ha(extent)
+    area_sort_col = _area_col(extent) if not extent.empty else None
     n_habitats = int(len(extent))
     with_ev = int(condition["Habitat_EV"].notna().sum()) if "Habitat_EV" in condition.columns else 0
 
@@ -270,8 +270,11 @@ from the MARBEFES EVA pipeline.
 
 """
 
-    # Top three habitats — accommodate either "total_area" or "area_Ha"
-    top = extent.sort_values(total_area_ha_col, ascending=False).head(3)
+    # Top three habitats — sort by the in-Ha area column (or area_m2 fallback)
+    if extent.empty or area_sort_col is None:
+        top = extent.head(0)
+    else:
+        top = extent.sort_values(area_sort_col, ascending=False).head(3)
     cond_ev = condition.set_index("EUNIS_code")["Habitat_EV"] if "Habitat_EV" in condition.columns else pd.Series(dtype=float)
     md += "**Top three habitats by area**\n\n"
     md += "| Rank | EUNIS | Name | Area (Ha) | % | habEV |\n"
@@ -280,11 +283,20 @@ from the MARBEFES EVA pipeline.
         code = row["EUNIS_code"]
         name = row.get("EUNIS_name", code)
         pct = row.get("pct_of_total", np.nan)
+        # Row Ha: prefer the Ha-unit columns, else derive from area_m2.
+        if "total_area" in extent.columns:
+            row_ha = float(row["total_area"])
+        elif "area_Ha" in extent.columns:
+            row_ha = float(row["area_Ha"])
+        elif "area_m2" in extent.columns:
+            row_ha = float(row["area_m2"]) / 10_000.0
+        else:
+            row_ha = float(row[area_sort_col]) if area_sort_col else float("nan")
         habev_val = cond_ev.get(code, np.nan)
         habev_txt = f"{habev_val:.2f}" if pd.notna(habev_val) else "n/a"
         pct_txt = f"{pct:.1f}" if pd.notna(pct) else "—"
         md += (f"| {i} | {code} | {name} | "
-               f"{row[total_area_ha_col]:,.0f} | {pct_txt} | {habev_txt} |\n")
+               f"{row_ha:,.0f} | {pct_txt} | {habev_txt} |\n")
 
     md += f"""
 ## 2. Extent Account
@@ -574,10 +586,50 @@ def _fmt_float(v, digits: int = 2) -> str:
 
 
 def _area_col(df: pd.DataFrame) -> str:
+    """Return the name of the area column assumed to be in hectares.
+
+    The producers of ``extent`` DataFrames in this codebase
+    (``eunis_data.compute_eunis_extent`` with ``unit="Ha"`` and
+    ``generate_pa_lt_report.build_habs_ev_lt``) populate ``total_area``
+    or ``area_Ha`` in hectares. ``area_m2`` (square metres) is
+    specifically excluded here — callers that need a hectare value
+    should use :func:`_extent_total_ha`, which handles the conversion.
+    """
     for c in ("total_area", "area_Ha", "area"):
         if c in df.columns:
             return c
+    # Fallback: first numeric column that is *not* area_m2 (m² would be
+    # ~1e4× the Ha value and produce wildly wrong figures downstream).
+    numerics = [c for c in df.select_dtypes(include="number").columns if c != "area_m2"]
+    if numerics:
+        return numerics[0]
+    # Last-ditch fallback — caller gets m² and should use _extent_total_ha.
     return df.select_dtypes(include="number").columns[0]
+
+
+def _extent_total_ha(df: pd.DataFrame) -> float:
+    """Total extent in hectares, regardless of which area column is present."""
+    if df.empty:
+        return 0.0
+    for col in ("total_area", "area_Ha", "area"):
+        if col in df.columns:
+            return float(df[col].sum())
+    if "area_m2" in df.columns:
+        return float(df["area_m2"].sum()) / 10_000.0
+    numeric = df.select_dtypes(include="number")
+    return float(numeric.iloc[:, 0].sum()) if not numeric.empty else 0.0
+
+
+def _row_area_ha(row, df: pd.DataFrame) -> float:
+    """Hectares for a row, converting from area_m2 if necessary."""
+    if "total_area" in df.columns:
+        return float(row["total_area"])
+    if "area_Ha" in df.columns:
+        return float(row["area_Ha"])
+    if "area_m2" in df.columns:
+        return float(row["area_m2"]) / 10_000.0
+    area_col = _area_col(df)
+    return float(row[area_col])
 
 
 def add_extent_detail(doc, extent: pd.DataFrame) -> None:
@@ -585,17 +637,17 @@ def add_extent_detail(doc, extent: pd.DataFrame) -> None:
     if extent.empty:
         doc.add_paragraph("No extent data available.")
         return
-    area_col = _area_col(extent)
     headers = ["EUNIS", "Habitat", "Subzones", "Area (Ha)", "Area (km²)", "% of Total"]
-    total_ha = float(extent[area_col].sum())
+    total_ha = _extent_total_ha(extent)
     rows = []
     for _, r in extent.iterrows():
+        row_ha = _row_area_ha(r, extent)
         rows.append([
             str(r["EUNIS_code"]),
             str(r.get("EUNIS_name", "")),
             _fmt_int(r.get("n_subzones", np.nan)),
-            _fmt_float(r[area_col], 1),
-            _fmt_float(r[area_col] / 100.0, 1),
+            _fmt_float(row_ha, 1),
+            _fmt_float(row_ha / 100.0, 1),
             _fmt_float(r.get("pct_of_total", np.nan), 1),
         ])
     rows.append([

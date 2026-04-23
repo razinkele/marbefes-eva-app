@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix seven concrete bugs in the Physical Accounts (PA) module surfaced by the 2026-04-22 code review: broken CRS string parsing, missing defensive guards, custom habitat name loss in exports, pct rounding drift, missing BBT8 schema validation, hardcoded BBT8 total-area argument, and silent supply-input validation.
+**Goal:** Fix eight concrete bugs in the Physical Accounts (PA) module surfaced by the 2026-04-22 code review: broken CRS string parsing, missing defensive guards, custom habitat name loss in exports, pct rounding drift, missing BBT8 schema validation, hardcoded BBT8 total-area argument, silent supply-input validation, and acceptance of non-positive supply inputs.
 
 **Architecture:** All fixes are localised to `pa_calculations.py`, `pa_export.py`, and the PA server section of `app.py` (~lines 2035-2373 and 2800-2870). No schema migrations. No UI changes. Each fix ships with a pytest test that demonstrates the bug before the fix and passes after. The deeper `"Subzone ID"` / `"Subzone_ID"` schema split is explicitly out of scope — it warrants its own plan.
 

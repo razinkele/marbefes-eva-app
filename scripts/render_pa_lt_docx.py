@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -71,17 +72,36 @@ def main() -> None:
     md = MD_PATH.read_text(encoding="utf-8")
 
     logger.info("Reading %s", XLSX_PATH.name)
-    extent = pd.read_excel(XLSX_PATH, sheet_name="extent")
-    condition = pd.read_excel(XLSX_PATH, sheet_name="condition")
-    supply = pd.read_excel(XLSX_PATH, sheet_name="supply")
-    missing = pd.read_excel(XLSX_PATH, sheet_name="missing_values")
-    readme = pd.read_excel(XLSX_PATH, sheet_name="ReadMe")
+    with pd.ExcelFile(XLSX_PATH) as xlsx:
+        available = set(xlsx.sheet_names)
+        required = {"extent", "condition", "supply", "ReadMe"}
+        missing_sheets = required - available
+        if missing_sheets:
+            raise ValueError(
+                f"{XLSX_PATH.name} is missing required sheet(s): "
+                f"{sorted(missing_sheets)}"
+            )
+        extent = pd.read_excel(xlsx, sheet_name="extent")
+        condition = pd.read_excel(xlsx, sheet_name="condition")
+        supply = pd.read_excel(xlsx, sheet_name="supply")
+        # missing_values is optional — generate_pa_lt_report skips the
+        # sheet when there are no issues at all.
+        if "missing_values" in available:
+            missing = pd.read_excel(xlsx, sheet_name="missing_values")
+        else:
+            missing = pd.DataFrame(columns=["Subzone_ID", "issue_type", "notes"])
+        readme = pd.read_excel(xlsx, sheet_name="ReadMe")
 
     # Normalize column names that differ between the LT pipeline and the
     # generic BBT8 schema used by pa_docx's detail tables.
     condition = condition.rename(columns={"habEV": "Habitat_EV"})
 
-    generated = str(readme.loc[readme["Parameter"] == "Generated", "Value"].iloc[0])
+    gen_rows = readme.loc[readme["Parameter"] == "Generated", "Value"]
+    if gen_rows.empty:
+        logger.warning("ReadMe has no 'Generated' row — using today's date")
+        generated = datetime.now().strftime("%Y-%m-%d")
+    else:
+        generated = str(gen_rows.iloc[0])
     metadata = {
         "bbt_name": "Lithuanian BBT5 — Curonian Lagoon & Baltic Sea Coast",
         "generated": generated,
