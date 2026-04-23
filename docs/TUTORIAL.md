@@ -295,4 +295,4 @@ The Lithuanian BBT5 assessment (Razinkovas-Baziukas et al., 2025) found that zoo
 
 ---
 
-*Tutorial created for MARBEFES EVA v3.5.1 | Data: Lithuanian BBT5 (Klaipeda University) | Framework: Franco & Amorim (2025)*
+*Tutorial created for MARBEFES EVA v3.8.0 | Data: Lithuanian BBT5 (Klaipeda University) | Framework: Franco & Amorim (2025)*

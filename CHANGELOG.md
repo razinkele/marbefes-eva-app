@@ -3,6 +3,48 @@
 All notable changes to the MARBEFES EVA application are documented in this file.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [3.8.0] - 2026-04-23 "Report Ready"
+
+### Added
+
+- **Physical Accounts: Word (DOCX) export** — new "📝 Download BBT8 Report (Word)" button in the Physical Accounts sidebar generates a styled Word document from the live EUNIS overlay + EVA data: cover page, narrative, 6 styled tables (headline figures, top habitats, detailed extent/condition/supply, missing-values summary), and 7 embedded habitat/indicator maps.
+- **New module: `pa_docx.py`** — stateless DOCX renderer (parses Markdown + builds native `python-docx` structure with banded tables and in-memory matplotlib map images). Consumed by both `app.py` and the `scripts/render_pa_lt_docx.py` CLI so the two flows never drift.
+- **`scripts/bump_version.py`** — one-shot version bumper that updates `version.py`, `CHANGELOG.md`, `README.md`, `docs/USER_MANUAL.md`, and `docs/TUTORIAL.md` in a single command with `--dry-run` support and 27 tests. UI About dialog + sidebar footer + page title + XLSX/DOCX export metadata all read from `version.py` so they update automatically on the next render.
+- **Module-level EVA cache + background prewarm thread** in `app.py` — amortises the 254 MB `ALL4EVA` GeoPackage load across all Shiny sessions on a worker (was reloading once per session = 12–15s on server, 54s on OneDrive-synced local).
+- **New SDM helpers in `scripts/sdm_analyse.py`**: `detect_coord_cols` (case-insensitive matching of DwC-A coord aliases: `decimalLatitude`/`decimalLongitude`/`latitude`/`Latitude` etc), `filter_species_columns` (auto-select excludes coord aliases + id columns + date/depth columns), `_align_valid_for_residuals` (mirrors `eva_sdm.prepare_features` drop behaviour so regression kriging doesn't misalign).
+
+### Changed
+
+- **`@render.download` handlers raise `RuntimeError` on error paths instead of `return None`** — Shiny's session-side streaming code iterates over the return value; `None` falls through to the Iterable branch and hangs the half-open connection until shiny-server's hard-coded 45-second socket timeout fires. Raising produces a clean HTTP 500 immediately.
+- **`compare_methods` accepts `lat_col` / `lon_col` kwargs** and threads them through to both `eva_sdm._sites_to_metric` and `eva_sdm.fit_kriging`, so DwC-A uploads with aliased coordinate columns work end-to-end.
+- **`deploy_to_laguna_razinka.sh`** is now tracked in git (previously gitignored as a "deployment artefact"). Verifies imports against the real runtime `/opt/micromamba/envs/shiny/bin/python3` (not the unused `./venv/` the script builds). Auto-vendors missing runtime deps via `pip install --user` + copy into the app dir with a distribution-name map (`docx`→`python-docx`, `PIL`→`Pillow`, etc). Uploads `scripts/*.py` (previously skipped — caused silent drift).
+- **`scripts/compute_physical_accounts.py`, `scripts/generate_pa_report.py`, `scripts/generate_pa_bbt8_report.py`** now import `__version__` from `version.py` instead of hardcoded strings (were drifting 4 major versions out of date; bump script now doesn't need to touch them).
+- **`scripts/config.py`** — replaced hardcoded `C:\Users\DELL\…` paths with `EVA_FINAL_DIR` / `EVA_FINAL_CORRECTED_DIR` env-var overrides and a project-root-sibling fallback matching `generate_pa_lt_report.py`.
+
+### Fixed
+
+- **BBT8 Word download was never actually reachable in production** — the EVA GeoPackage was mode 600 in a mode-700 directory; the `shiny` user that runs the app couldn't read it; `cached_eva_data()` silently returned `None`; the handler returned `None` which triggered the 45s Shiny streaming-hang above. Every user who clicked the download button since the feature existed got a blank-response hang. Fix is permission + env-var work on the server (documented in memory + the code now raises cleanly if permissions regress).
+- **`analyse_collinearity`** / **`habitat_preference_table`**: `sorted(sites_cov[eunis_col].unique())` raised `TypeError: '<' not supported between 'float' and 'str'` on Python 3.13 / pandas 2.x when the EUNIS column had NaN mixed with habitat codes.
+- **Regression kriging residual alignment**: `prepare_features` drops rows where response OR feature is NaN, but the old code rebuilt `valid` dropping only on features, so `valid["__resid__"] = residuals` raised `ValueError` when the response had NaN.
+- **SDM species auto-select picked up coordinate columns** from DwC-A uploads (`decimalLatitude`/`decimalLongitude` were being treated as species because the filter only excluded a short `meta_cols` set).
+- **Silent failure when every SDM species errored** — the per-species loop caught `Exception` with `logger.warning` and stored an empty `species_results` as if the analysis had succeeded, leaving stale UI state. Now raises a user-visible error and resets stale results.
+- **`eva_ui.py:2097`** — duplicate `id="sdm_tabs"` on the wrapper `ui.div` (the inner `ui.navset_tab` already had it). Invalid HTML; broke CSS selector precedence.
+- **Local `shiny` micromamba env was missing five packages** listed in `requirements.txt` (`pygam`, `pykrige`, `gstools`, `xgboost`, `lightgbm`). 22 tests in `tests/test_eva_sdm.py` were failing (14) or skipping (8). Installed from conda-forge.
+- **Server micromamba env: `lightgbm` import failed** via `dask.array.chunk_types → cupy.ndarray` chain because `zarr` had drifted to 3.1.5 (violating the `zarr<3.0` pin in `requirements.txt`) and had pulled in a stub `cupy` package that was registered as a namespace package. Removed the cupy ghost + downgraded zarr.
+- **`scripts/sdm_analyse.compare_methods`: hardcoded `"lat"`/`"lon"`** in `_sites_to_metric` call — fails on any DataFrame using coord-column aliases.
+- **Three dead `NotImplementedError` stubs** removed from `pa_calculations.py` (`compute_use_table`, `compute_condition_account`, `compute_extent_changes` — pure trap-holes with zero callers; working implementations live in `scripts/compute_physical_accounts.py`).
+
+### Removed
+
+- **`scripts/generate_pa_docx.py`** — stale 570-line script targeting an obsolete MSFD/HELCOM classification with hardcoded `C:\Users\DELL\` paths. Replaced by the generic `pa_docx.py` + `scripts/render_pa_lt_docx.py` CLI wrapper.
+
+### Tests
+
+- `tests/test_pa_docx.py` — 25 new tests (MD parser, inline-run rendering, DOCX assembly, **structural invariant**: `sectPr` must remain the last element of `<w:body>` across all section injections).
+- `tests/test_sdm_analyse.py` — 18 new tests covering every new helper, with `pytest.importorskip("pykrige")` gating the kriging-branch tests so they skip cleanly without pykrige available.
+- `tests/test_bump_version.py` — 27 new tests: version math, `read_version_py`/`rewrite_version_py`, changelog entry building, README title-rewrite regression guard against an `\s*$`-ate-the-blank-line bug I hit during live dry-run, full end-to-end CLI runs on `tmp_path` fake trees.
+- Overall suite: **389 passed, 0 failed, 0 skipped** across 15 test files (was 25 passed, 14 failed, 8 skipped at session start).
+
 ## [3.7.0] - 2026-04-06 "SDM Intelligence"
 
 ### Added

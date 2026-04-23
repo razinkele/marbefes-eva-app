@@ -12,11 +12,11 @@ Import from here in all modules that need version data.
 #   PATCH: Bug fixes, UI tweaks, documentation updates
 # ---------------------------------------------------------------------------
 
-__version__ = "3.7.0"
+__version__ = "3.8.0"
 
 # Structured version info
 VERSION_MAJOR = 3
-VERSION_MINOR = 7
+VERSION_MINOR = 8
 VERSION_PATCH = 0
 VERSION_LABEL = ""  # e.g., "beta", "rc1", or "" for release
 
@@ -25,8 +25,8 @@ EVA_MODULE_VERSION = "2.2.0"       # EVA assessment engine (AQ1-15, EV calculati
 PA_MODULE_VERSION = "1.0.0"        # Physical Accounts (Extent, Supply)
 
 # Build metadata
-BUILD_DATE = "2026-04-06"
-CODENAME = "SDM Intelligence"      # Release codename
+BUILD_DATE = "2026-04-23"
+CODENAME = "Report Ready"      # Release codename
 
 # ---------------------------------------------------------------------------
 # Computed version strings

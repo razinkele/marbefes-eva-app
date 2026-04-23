@@ -1,6 +1,6 @@
 # MARBEFES EVA — User Manual
 
-**Version 3.5.1** | Last updated: 2026-03-18
+**Version 3.8.0** | Last updated: 2026-04-23
 
 ## Table of Contents
 
