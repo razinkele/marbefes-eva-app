@@ -73,8 +73,11 @@ sample_data_with_rare_features.csv
 # Project archive
 project_archive/
 
-# Deployment scripts
-deploy_to_laguna_razinka.sh
+# Deployment scripts — abandoned historical artifacts that reference old
+# paths (/srv/shiny-server/marbefes_eva_app, /srv/shiny-server/sample-apps/EVA)
+# and old naming. Kept gitignored so they don't get mistaken for authoritative
+# config. The current authoritative deploy script is deploy_to_laguna_razinka.sh
+# and IS tracked.
 manage_app.sh
 cleanup.sh
 marbefes-eva.service
