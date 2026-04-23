@@ -108,6 +108,32 @@ def detect_coord_cols(df: pd.DataFrame) -> tuple[str, str]:
     return lat, lon
 
 
+# Columns that should never be classified as a species response.
+# Lower-cased; the filter compares via str.lower().
+_SDM_META_COLUMNS = frozenset({
+    "lat", "lon", "latitude", "longitude",
+    "decimallatitude", "decimallongitude",
+    "x", "y", "coord_x", "coord_y",
+    "eventid", "occurrenceid", "locationid", "site_id", "station",
+    "date", "datetime", "eventdate",
+    "depth", "depth_m", "elevation",
+    "geometry",
+})
+
+
+def filter_species_columns(data: pd.DataFrame) -> list[str]:
+    """Return numeric columns of ``data`` that are not metadata/coord/id columns.
+
+    Case-insensitive against a curated exclusion list. Non-numeric columns
+    are always dropped regardless of name.
+    """
+    return [
+        c for c in data.columns
+        if c.lower() not in _SDM_META_COLUMNS
+        and pd.api.types.is_numeric_dtype(data[c])
+    ]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loading
 # ─────────────────────────────────────────────────────────────────────────────

@@ -3470,11 +3470,7 @@ def server(input, output, session):
             if dwca_info and "species_list" in dwca_info:
                 species_list = dwca_info["species_list"]
             else:
-                meta_cols = {"lat", "lon", "eventid", "locationid", "site_id",
-                             "station", "date", "depth", "geometry"}
-                species_list = [c for c in data.columns
-                                if c.lower() not in meta_cols
-                                and pd.api.types.is_numeric_dtype(data[c])]
+                species_list = _sdm_mod.filter_species_columns(data)
 
             # Auto-select species across prevalence gradient
             selected = _sdm_mod.select_species(
