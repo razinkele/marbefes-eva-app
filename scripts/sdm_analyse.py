@@ -89,6 +89,25 @@ def _align_valid_for_residuals(
     return sites_cov.dropna(subset=numeric + [species_col]).reset_index(drop=True)
 
 
+# Coord-column aliases recognized when auto-detecting lat/lon names on an
+# uploaded DataFrame. Compared case-insensitively via lower-cased lookup.
+_LAT_ALIASES = ("lat", "latitude", "decimallatitude", "decimal_latitude")
+_LON_ALIASES = ("lon", "lng", "long", "longitude", "decimallongitude", "decimal_longitude")
+
+
+def detect_coord_cols(df: pd.DataFrame) -> tuple[str, str]:
+    """Return the best-match lat/lon column names in ``df``.
+
+    Matching is case-insensitive against a fixed alias list. If no alias
+    is found, returns the defaults ("lat", "lon") — the caller is
+    responsible for handling the KeyError those would trigger downstream.
+    """
+    lower_to_original = {c.lower(): c for c in df.columns}
+    lat = next((lower_to_original[a] for a in _LAT_ALIASES if a in lower_to_original), "lat")
+    lon = next((lower_to_original[a] for a in _LON_ALIASES if a in lower_to_original), "lon")
+    return lat, lon
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Data loading
 # ─────────────────────────────────────────────────────────────────────────────
@@ -384,6 +403,8 @@ def compare_methods(
     methods: list[str] = None,
     env_cols: list[str] | None = None,
     eunis_cols: list[str] | None = None,
+    lat_col: str = "lat",
+    lon_col: str = "lon",
 ) -> dict[str, Any]:
     """
     Compare multiple SDM methods for one species.
@@ -412,7 +433,7 @@ def compare_methods(
                 n_valid = int(preds.notna().sum())
 
                 # In-sample evaluation
-                coords_m = eva_sdm._sites_to_metric(sites_cov, "lat", "lon")
+                coords_m = eva_sdm._sites_to_metric(sites_cov, lat_col, lon_col)
                 y_vals = sites_cov[species].values.astype(float)
                 mask = ~np.isnan(y_vals)
                 ok_preds = []
