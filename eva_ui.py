@@ -2094,7 +2094,6 @@ app_ui = ui.page_fluid(
                         ),
                         id="sdm_tabs",
                     ),
-                    id="sdm_tabs",
                     style="height:100%;"
                 ),
                 style="height:100%;"
