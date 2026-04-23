@@ -70,6 +70,71 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pykrige")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _align_valid_for_residuals(
+    sites_cov: pd.DataFrame, cols: list[str], species_col: str
+) -> pd.DataFrame:
+    """Return rows of ``sites_cov`` that survive NaN-dropping on both the
+    response column (``species_col``) and the numeric predictor columns.
+
+    Matches the row set that ``eva_sdm.prepare_features`` would keep:
+    numeric-only predictor filtering, plus exclusion of columns that are
+    entirely NaN (``prepare_features`` drops those from its dropna subset
+    at eva_sdm.py:173-180).
+    """
+    numeric = [c for c in cols if pd.api.types.is_numeric_dtype(sites_cov[c])]
+    numeric = [c for c in numeric if not sites_cov[c].isna().all()]
+    return sites_cov.dropna(subset=numeric + [species_col]).reset_index(drop=True)
+
+
+# Coord-column aliases recognized when auto-detecting lat/lon names on an
+# uploaded DataFrame. Compared case-insensitively via lower-cased lookup.
+_LAT_ALIASES = ("lat", "latitude", "decimallatitude", "decimal_latitude")
+_LON_ALIASES = ("lon", "lng", "long", "longitude", "decimallongitude", "decimal_longitude")
+
+
+def detect_coord_cols(df: pd.DataFrame) -> tuple[str, str]:
+    """Return the best-match lat/lon column names in ``df``.
+
+    Matching is case-insensitive against a fixed alias list. If no alias
+    is found, returns the defaults ("lat", "lon") — the caller is
+    responsible for handling the KeyError those would trigger downstream.
+    """
+    lower_to_original = {c.lower(): c for c in df.columns}
+    lat = next((lower_to_original[a] for a in _LAT_ALIASES if a in lower_to_original), "lat")
+    lon = next((lower_to_original[a] for a in _LON_ALIASES if a in lower_to_original), "lon")
+    return lat, lon
+
+
+# Columns that should never be classified as a species response.
+# Lower-cased; the filter compares via str.lower().
+_SDM_META_COLUMNS = frozenset({
+    "lat", "lon", "latitude", "longitude",
+    "decimallatitude", "decimallongitude",
+    "x", "y", "coord_x", "coord_y",
+    "eventid", "occurrenceid", "locationid", "site_id", "station",
+    "date", "datetime", "eventdate",
+    "depth", "depth_m", "elevation",
+    "geometry",
+})
+
+
+def filter_species_columns(data: pd.DataFrame) -> list[str]:
+    """Return numeric columns of ``data`` that are not metadata/coord/id columns.
+
+    Case-insensitive against a curated exclusion list. Non-numeric columns
+    are always dropped regardless of name.
+    """
+    return [
+        c for c in data.columns
+        if c.lower() not in _SDM_META_COLUMNS
+        and pd.api.types.is_numeric_dtype(data[c])
+    ]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Data loading
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -364,6 +429,8 @@ def compare_methods(
     methods: list[str] = None,
     env_cols: list[str] | None = None,
     eunis_cols: list[str] | None = None,
+    lat_col: str = "lat",
+    lon_col: str = "lon",
 ) -> dict[str, Any]:
     """
     Compare multiple SDM methods for one species.
@@ -384,7 +451,10 @@ def compare_methods(
         try:
             if method == "kriging":
                 # Ordinary Kriging — spatial only
-                ok = eva_sdm.fit_kriging(sites_cov, species, variogram_model="spherical")
+                ok = eva_sdm.fit_kriging(
+                    sites_cov, species, variogram_model="spherical",
+                    lat_col=lat_col, lon_col=lon_col,
+                )
                 preds, unc = eva_sdm.predict_grid(
                     grid_gdf=covariates, predictor_cols=[],
                     kriging_model=ok, method="kriging",
@@ -392,7 +462,7 @@ def compare_methods(
                 n_valid = int(preds.notna().sum())
 
                 # In-sample evaluation
-                coords_m = eva_sdm._sites_to_metric(sites_cov, "lat", "lon")
+                coords_m = eva_sdm._sites_to_metric(sites_cov, lat_col, lon_col)
                 y_vals = sites_cov[species].values.astype(float)
                 mask = ~np.isnan(y_vals)
                 ok_preds = []
@@ -437,11 +507,12 @@ def compare_methods(
                             sites_cov, cols, species, response_type="continuous")
                         rf = eva_sdm.fit_random_forest(X, y, response_type="continuous")
                         residuals = y - rf.predict(X)
-                        valid = sites_cov.dropna(subset=[c for c in cols
-                                                         if pd.api.types.is_numeric_dtype(sites_cov[c])]
-                                                 ).reset_index(drop=True)
+                        valid = _align_valid_for_residuals(sites_cov, cols, species)
                         valid["__resid__"] = residuals
-                        rk = eva_sdm.fit_kriging(valid, "__resid__", variogram_model="spherical")
+                        rk = eva_sdm.fit_kriging(
+                            valid, "__resid__", variogram_model="spherical",
+                            lat_col=lat_col, lon_col=lon_col,
+                        )
 
                         preds, unc = eva_sdm.predict_grid(
                             grid_gdf=covariates, predictor_cols=cols,
@@ -486,13 +557,15 @@ def analyse_collinearity(
     if eunis_col is None:
         return {"error": "No EUNIS column found"}
 
-    # Habitat distribution
-    hab_counts = sites_cov[eunis_col].value_counts().to_dict()
+    # Habitat distribution — drop NaN habitats so iteration and value_counts
+    # do not surface NaN keys to downstream formatters.
+    eunis_series = sites_cov[eunis_col].dropna()
+    hab_counts = eunis_series.value_counts().to_dict()
 
     # Depth by habitat
     depth_by_hab = {}
     if "depth_m" in sites_cov.columns:
-        for h in sorted(sites_cov[eunis_col].unique()):
+        for h in sorted(eunis_series.unique()):
             sub = sites_cov[sites_cov[eunis_col] == h]["depth_m"].dropna()
             depth_by_hab[h] = {
                 "count": len(sub),
@@ -545,7 +618,7 @@ def habitat_preference_table(
     if eunis_col is None:
         return pd.DataFrame()
 
-    habitats = sorted(sites_cov[eunis_col].unique())
+    habitats = sorted(sites_cov[eunis_col].dropna().unique())
     rows = []
     for sp, prev, n_pres in species_list:
         row = {"Species": sp, "Prevalence": f"{prev:.0%}"}
