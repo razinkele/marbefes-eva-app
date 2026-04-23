@@ -70,6 +70,26 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pykrige")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _align_valid_for_residuals(
+    sites_cov: pd.DataFrame, cols: list[str], species_col: str
+) -> pd.DataFrame:
+    """Return rows of ``sites_cov`` that survive NaN-dropping on both the
+    response column (``species_col``) and the numeric predictor columns.
+
+    Matches the row set that ``eva_sdm.prepare_features`` would keep:
+    numeric-only predictor filtering, plus exclusion of columns that are
+    entirely NaN (``prepare_features`` drops those from its dropna subset
+    at eva_sdm.py:173-180).
+    """
+    numeric = [c for c in cols if pd.api.types.is_numeric_dtype(sites_cov[c])]
+    numeric = [c for c in numeric if not sites_cov[c].isna().all()]
+    return sites_cov.dropna(subset=numeric + [species_col]).reset_index(drop=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Data loading
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -437,9 +457,7 @@ def compare_methods(
                             sites_cov, cols, species, response_type="continuous")
                         rf = eva_sdm.fit_random_forest(X, y, response_type="continuous")
                         residuals = y - rf.predict(X)
-                        valid = sites_cov.dropna(subset=[c for c in cols
-                                                         if pd.api.types.is_numeric_dtype(sites_cov[c])]
-                                                 ).reset_index(drop=True)
+                        valid = _align_valid_for_residuals(sites_cov, cols, species)
                         valid["__resid__"] = residuals
                         rk = eva_sdm.fit_kriging(valid, "__resid__", variogram_model="spherical")
 
