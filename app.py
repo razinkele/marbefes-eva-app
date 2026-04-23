@@ -3506,9 +3506,11 @@ def server(input, output, session):
 
             # Method comparison on primary species
             sdm_analysis_message.set(f"⏳ Comparing methods for {selected[0][0]}…")
+            lat_col, lon_col = _sdm_mod.detect_coord_cols(sites_cov)
             method_results = _sdm_mod.compare_methods(
                 sites_cov, selected[0][0], cov,
                 methods=["rf", "kriging"],
+                lat_col=lat_col, lon_col=lon_col,
             )
 
             sdm_analysis_results.set({
