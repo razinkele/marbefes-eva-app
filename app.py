@@ -29,6 +29,78 @@ import pa_export
 import pa_docx
 import eva_visualizations
 import eva_map
+import threading as _threading
+
+
+# Logger used by the module-level EVA cache code below. Full basicConfig
+# happens further down; we just need a Logger instance here.
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Module-level EVA data cache
+#
+# shiny-server's Node.js proxy has a hardcoded 45-second socket idle timeout
+# (see /opt/shiny-server/lib/main.js: `var socketTimeout = 45 * 1000;`). The
+# EVA GeoPackage is ~254 MB and loading it via `gpd.read_file()` takes 12-15s
+# on the production SSD (54s on local OneDrive). If this load happens inside
+# a user-triggered reactive (e.g., the download button handler), the worker
+# is CPU-bound with no socket activity for >12s, and shiny-server closes the
+# connection before any response bytes can be written.
+#
+# Fix: warm the cache at module-import time via a background thread, and
+# share the loaded GeoDataFrame across ALL sessions on the worker. The first
+# cached_eva_data() call after startup blocks on the thread (if still loading)
+# or returns immediately. Sessions after that pay no load cost at all.
+# ---------------------------------------------------------------------------
+_eva_cache: dict = {"gdf": None, "mtime": None, "path": None}
+_eva_lock = _threading.Lock()
+
+
+def _load_eva_gpkg_cached():
+    """Load EVA GeoPackage into the module cache if not already loaded.
+
+    Thread-safe. Returns the cached GeoDataFrame, or None if the env var
+    is unset/path missing. Re-reads if mtime of the file on disk changed.
+    """
+    eva_path = os.environ.get("MARBEFES_EVA_DATA_PATH", "")
+    if not eva_path or not os.path.exists(eva_path):
+        return None
+    try:
+        mtime = os.path.getmtime(eva_path)
+    except OSError:
+        return None
+    with _eva_lock:
+        if (
+            _eva_cache["gdf"] is not None
+            and _eva_cache["mtime"] == mtime
+            and _eva_cache["path"] == eva_path
+        ):
+            return _eva_cache["gdf"]
+        logger.info("Loading EVA data from %s into module cache…", eva_path)
+        gdf = gpd.read_file(eva_path)
+        _eva_cache["gdf"] = gdf
+        _eva_cache["mtime"] = mtime
+        _eva_cache["path"] = eva_path
+        logger.info("EVA loaded into module cache (%d features)", len(gdf))
+    return gdf
+
+
+def _prewarm_eva_cache():
+    try:
+        _load_eva_gpkg_cached()
+    except Exception:  # pragma: no cover — defensive
+        logging.getLogger(__name__).exception(
+            "EVA cache pre-warm failed; downloads will load on first access"
+        )
+
+
+# Start the pre-warm thread at import time. Daemon thread so it doesn't
+# block worker shutdown. Each worker pays the EVA load cost exactly once.
+_threading.Thread(
+    target=_prewarm_eva_cache,
+    name="eva-cache-prewarm",
+    daemon=True,
+).start()
 
 def _import_sdm_analyse():
     """Lazy import of SDM analysis functions (handles deployment sys.path)."""
@@ -59,7 +131,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-logger = logging.getLogger(__name__)
+# logger defined at module top for use by the EVA cache prewarm thread
 
 def server(input, output, session):
 
@@ -2397,11 +2469,12 @@ def server(input, output, session):
 
     @reactive.Calc
     def cached_eva_data():
-        eva_path = os.environ.get("MARBEFES_EVA_DATA_PATH", "")
-        if not eva_path or not os.path.exists(eva_path):
-            return None
-        logger.info("Loading EVA data from %s (cached)", eva_path)
-        return gpd.read_file(eva_path)
+        # Delegates to the module-level cache warmed at import time by a
+        # daemon thread. See `_load_eva_gpkg_cached` / `_prewarm_eva_cache`
+        # near the top of this file — that keeps per-session cost at ~0
+        # after the first worker-wide load, so download handlers complete
+        # well within shiny-server's 45s socket timeout.
+        return _load_eva_gpkg_cached()
 
     @reactive.Effect
     @reactive.event(input.upload_eunis_overlay)
@@ -2895,12 +2968,27 @@ def server(input, output, session):
         overlay = eunis_overlay.get()
         if overlay is None:
             ui.notification_show("Upload a EUNIS overlay first.", type="warning")
-            return None
+            # RAISE instead of `return None`. Shiny's @render.download streams
+            # whatever the handler returns; a None return falls through to an
+            # Iterable-iteration branch that hangs until shiny-server's 45s
+            # socket timeout. Raising produces a clean 500 immediately.
+            raise RuntimeError(
+                "Upload a EUNIS overlay before requesting the BBT8 report."
+            )
 
         eva = cached_eva_data()
         if eva is None:
-            ui.notification_show("EVA data not found.", type="error")
-            return None
+            ui.notification_show(
+                "EVA data not found on server. Set MARBEFES_EVA_DATA_PATH "
+                "and ensure the file is readable by the shiny user.",
+                type="error", duration=15,
+            )
+            raise RuntimeError(
+                "EVA data unavailable — MARBEFES_EVA_DATA_PATH is unset, or the "
+                "file is not readable by the user running the Shiny worker. "
+                "On laguna this is the 'shiny' user; check `ls -l` on the path "
+                "returned by os.environ.get('MARBEFES_EVA_DATA_PATH')."
+            )
 
         unit = input.pa_area_unit()
         extent = eunis_data.compute_eunis_extent(overlay, unit=unit)

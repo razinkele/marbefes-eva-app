@@ -54,6 +54,10 @@ nohup.out
 # Claude Code
 .claude/
 
+# Browser automation snapshots (Playwright MCP) — transient page dumps,
+# never meant to be versioned.
+.playwright-mcp/
+
 # Understand project
 *.und/
 
