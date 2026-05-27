@@ -58,3 +58,8 @@ def test_validate_feedback_rejects_overlong_description():
 
 def test_validate_feedback_rejects_bad_type():
     assert eva_feedback.validate_feedback("Title", "Desc", "nonsense") == "Invalid report type."
+
+
+def test_validate_feedback_rejects_overlong_steps():
+    msg = eva_feedback.validate_feedback("Title", "Desc", steps="x" * 2001)
+    assert "2000" in msg
