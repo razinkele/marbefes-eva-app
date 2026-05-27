@@ -45,18 +45,19 @@ def register_feedback_handlers(input, output, session) -> None
 ### UI — button + modal
 
 - **Button:** `ui.input_action_button("show_feedback_modal", "💬 Feedback", class_="btn-outline-secondary btn-sm")`, placed in the EVA header row (near the title/version).
-- **Modal** (`ui.modal(..., easy_close=True, footer=[Submit, Cancel])`), fields:
+- **Modal** (`ui.modal(..., easy_close=False, footer=[Submit, Cancel])`) — `easy_close=False` so an outside click can't discard a partially filled form. Fields:
 
   | Field | Control | Required | Visibility | Limit |
   |-------|---------|----------|------------|-------|
-  | Report type | `ui.input_radio_buttons` — Bug / Suggestion / General | Yes | Always | — |
+  | Report type | `ui.input_radio_buttons` — values `bug`/`suggestion`/`general`, labels "Bug Report"/"Improvement Suggestion"/"General Feedback" | Yes | Always | — |
   | Title | `ui.input_text` | Yes | Always | maxlength 200 |
   | Description | `ui.input_text_area` (5 rows) | Yes | Always | maxlength 5000 |
   | Steps to reproduce | `ui.input_text_area` (3 rows) | No | Bug only | maxlength 2000 |
   | System information | read-only collapsible block | n/a | Always (collapsed) | — |
 
-- The **Steps to reproduce** field is shown/hidden by a `@reactive.effect` watching `input.feedback_type` (via `ui.update_*`/`ui.insert`/conditional rendering — implementation plan to choose the cleanest Python-Shiny mechanism).
+- The **Steps to reproduce** field is wrapped in `ui.panel_conditional("input.feedback_type === 'bug'", …)` so it appears only for Bug reports — client-side, no server round-trip (Python-Shiny's equivalent of R's `conditionalPanel`).
 - `browser_info` is captured by a small `ui.tags.script` in the modal body running `Shiny.setInputValue('fb_browser_info', navigator.userAgent)` on open.
+- **Input ids:** `show_feedback_modal` (trigger), `feedback_type`, `feedback_title`, `feedback_description`, `feedback_steps`, `feedback_submit`, `fb_browser_info`. Cancel uses the modal's built-in dismiss.
 
 ### Submission flow
 
@@ -72,16 +73,19 @@ Submit clicked
         failure → notification "Thank you! Saved."
      else      → notification "Thank you! Saved."
   → ui.modal_remove()
-  → record last-submit time; re-enable Submit after 30 s
+  → record last-submit time
 ```
+
+**Rate-limit scope:** the last-submit time is a per-session `reactive.value`. Each modal open builds a fresh `feedback_modal()`, so there is no need to re-enable a button across opens (the R reference's `shinyjs::delay` re-enable is dropped). The 30 s server-side check is the real guard; the client-side disable only prevents double-clicks within one open. Two browser tabs are separate sessions and each gets its own limiter — acceptable for this use case.
 
 ### Storage & configuration
 
-- **Local log:** NDJSON, append-only. Path from env `MARBEFES_EVA_FEEDBACK_LOG`; default `<app_dir>/feedback/user_feedback_log.ndjson`. The directory is created if missing. It lives in a folder the deploy script never uploads or wipes, so it **persists across deploys**. Gitignored.
+- **Local log:** NDJSON, append-only. Path from env `MARBEFES_EVA_FEEDBACK_LOG`; default `<app_dir>/feedback/user_feedback_log.ndjson`. The directory is created if missing. It lives in a folder the deploy script never uploads or wipes, so it **persists across deploys**. Gitignored. **Concurrency:** one `json.dumps(payload) + "\n"` is a single append with no read-modify-write — safe for sequential/low-volume use; multi-worker deployments get best-effort safety from the append-only pattern.
 - **GitHub:** token from env `MARBEFES_EVA_GITHUB_TOKEN`; target repo from env `MARBEFES_EVA_GITHUB_REPO`, default `razinkele/marbefes-eva-app`. (Configurable so issues can later be pointed at a **private** repo, since the default repo is public.) Labels by type:
   - Bug → `["bug", "user-reported"]`
   - Suggestion → `["enhancement", "user-reported"]`
   - General → `["feedback", "user-reported"]`
+- **GitHub API:** `POST https://api.github.com/repos/{owner}/{repo}/issues`, headers `Authorization: Bearer <token>` and `Accept: application/vnd.github+json`; `{owner}`/`{repo}` parsed from `MARBEFES_EVA_GITHUB_REPO` (`owner/repo` form). Success = HTTP 201 (also accept 200); any other status or a request exception → return `None` and fall through to local-only.
 - **Issue body:** Markdown — `## Description`, optional `## Steps to Reproduce`, and a collapsible `<details>` block holding the system-context JSON.
 
 ### Auto-collected context (EVA-adapted, no PII)
@@ -89,7 +93,7 @@ Submit clicked
 Gathered at submit time via `collect_system_context`:
 
 - `app_version` — `version.get_version()` (e.g., `"3.8.0"`)
-- `current_tab` — active nav panel id (or `"unknown"`)
+- `current_tab` — id of the active main navset panel, read defensively from the relevant `input.*` nav id (`"unknown"` if unavailable)
 - `browser_info` — `navigator.userAgent` via `input.fb_browser_info`
 - `selected_area` — selected BBT/study area if present in inputs, else `"unknown"`
 - `dataset_loaded` — boolean; plus `feature_count` (integer only) when a dataset is loaded
