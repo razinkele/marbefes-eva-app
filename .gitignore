@@ -108,7 +108,11 @@ QUICK_DEPLOY_GUIDE.md
 .env
 *.env
 
-# Large study-area data: the BBT1 Porsangerfjord ZIP is tracked via Git LFS
-# (see .gitattributes). The unzipped copy is the same ~79 MB of shapefiles,
-# so we ignore it to avoid duplicating it in history.
+# Study-area datasets kept LOCAL (not published to this public repo, pending
+# data-sharing clearance). Files remain on disk; just untracked here.
+accounts_crete/
 BBT1 Porsangerfjord/
+BBT1 Porsangerfjord.zip
+BBT6 Gulf of Gdansk.zip
+aq_ev_27_06_2025.zip
+data/gadm_cache/ADM0_GRC.gpkg
