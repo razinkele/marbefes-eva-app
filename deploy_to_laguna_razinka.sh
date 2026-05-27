@@ -2,7 +2,8 @@
 ################################################################################
 # MARBEFES EVA Phase 2 - Deployment Script for laguna.ku.lt
 # User: razinka (with write access to /srv/shiny-server/EVA/)
-# Target: http://laguna.ku.lt:3838/EVA/
+# Public URL: https://laguna.ku.lt/EVA/  (internal shiny-server port 3838 is
+#             NOT publicly exposed — only reachable on the server itself)
 ################################################################################
 
 set -e  # Exit on any error
@@ -20,7 +21,9 @@ USERNAME="razinka"
 APP_NAME="EVA"
 SERVER_PATH="/srv/shiny-server/$APP_NAME"
 VENV_PATH="$SERVER_PATH/venv"
-APP_URL="http://laguna.ku.lt:3838/$APP_NAME/"
+# Public URL via the HTTPS reverse proxy. Port 3838 is server-local only, so
+# on-server checks use http://localhost:3838/$APP_NAME/ instead.
+APP_URL="https://laguna.ku.lt/$APP_NAME/"
 LOCAL_DIR="$(pwd)"
 
 # Required files
@@ -173,77 +176,28 @@ upload_files() {
 }
 
 setup_virtual_environment() {
-    print_step "5" "10" "Setting up Python virtual environment..."
+    print_step "5" "10" "Python environment..."
 
-    ssh "$USERNAME@$SERVER" bash <<'EOF'
-# Check Python version
-PYTHON_VERSION=$(python3 --version 2>&1 | awk '{print $2}')
-echo "Python version: $PYTHON_VERSION"
-
-cd /srv/shiny-server/EVA
-
-# Remove old venv if exists
-if [ -d "venv" ]; then
-    echo "Removing old virtual environment..."
-    rm -rf venv
-fi
-
-# Create new virtual environment
-echo "Creating virtual environment..."
-python3 -m venv venv
-
-if [ $? -ne 0 ]; then
-    echo "Error: Failed to create virtual environment"
-    exit 1
-fi
-
-echo "Virtual environment created successfully"
-EOF
-
-    if [ $? -eq 0 ]; then
-        print_success "Virtual environment ready"
-    else
-        print_error "Failed to create virtual environment"
-        exit 1
-    fi
+    # The runtime is the system-wide micromamba env
+    # (/opt/micromamba/envs/shiny); shiny-server does NOT use a per-app
+    # ./venv. Building one here cost minutes of pointless pip downloads on
+    # every deploy (300 MB+ of wheels), so it is skipped. Dependencies are
+    # verified — and auto-vendored if missing — against the *real* runtime
+    # env in step 8 (verify_deployment).
+    print_info "Runtime = /opt/micromamba/envs/shiny — skipping unused ./venv build."
+    print_success "Skipped vestigial venv (not used by shiny-server)"
     echo ""
 }
 
 install_dependencies() {
-    print_step "6" "10" "Installing Python dependencies..."
+    print_step "6" "10" "Dependencies..."
 
-    ssh "$USERNAME@$SERVER" bash <<'EOF'
-cd /srv/shiny-server/EVA
-
-# Activate virtual environment
-source venv/bin/activate
-
-# Upgrade pip
-echo "Upgrading pip..."
-pip install --upgrade pip setuptools wheel
-
-# Install dependencies
-echo "Installing application dependencies..."
-pip install -r requirements.txt
-
-# Verify installations
-echo ""
-echo "Verifying installed packages:"
-python -c "import shiny; print(f'✓ shiny {shiny.__version__}')"
-python -c "import pandas; print(f'✓ pandas {pandas.__version__}')"
-python -c "import numpy; print(f'✓ numpy {numpy.__version__}')"
-python -c "import plotly; print(f'✓ plotly {plotly.__version__}')"
-python -c "import openpyxl; print(f'✓ openpyxl {openpyxl.__version__}')"
-
-deactivate
-EOF
-
-    if [ $? -eq 0 ]; then
-        print_success "Dependencies installed successfully"
-    else
-        print_error "Failed to install dependencies"
-        exit 1
-    fi
+    # No ./venv to install into — deps are checked against the runtime env
+    # (and auto-vendored on ModuleNotFoundError) in step 8. This keeps a new
+    # requirements.txt entry from silently passing here while the runtime
+    # env still lacks it (the old venv install gave exactly that false pass).
+    print_info "Deferred to runtime-env verification in step 8."
+    print_success "Dependencies handled against the runtime env"
     echo ""
 }
 
@@ -391,29 +345,26 @@ EOF
 restart_shiny_server() {
     print_step "10" "10" "Restarting Shiny Server..."
 
+    # Primary, no-sudo reload: touching restart.txt makes shiny-server spawn
+    # a fresh worker for this app on the next request. A full `systemctl
+    # restart` needs sudo that the deploy user does not have non-interactively,
+    # so we attempt it but report its outcome HONESTLY instead of the previous
+    # code's unconditional "restarted successfully".
     ssh "$USERNAME@$SERVER" bash <<EOF
-sudo systemctl restart shiny-server 2>/dev/null || {
-    echo "Note: Could not restart shiny-server (may need sudo)."
-    echo "Please restart manually: sudo systemctl restart shiny-server"
-    exit 0
-}
-
-# Wait a moment for server to start
-sleep 2
-
-# Check if service is running
-if systemctl is-active --quiet shiny-server; then
-    echo "✓ Shiny Server is running"
-    systemctl status shiny-server --no-pager -l 2>/dev/null | head -10
+set -e
+touch "$SERVER_PATH/restart.txt"
+echo "✓ Touched restart.txt — shiny-server will reload the app on next request"
+if sudo -n systemctl restart shiny-server 2>/dev/null; then
+    echo "✓ Full shiny-server restart succeeded (passwordless sudo available)"
 else
-    echo "⚠ Could not verify Shiny Server status"
+    echo "ℹ No passwordless sudo — relying on the restart.txt app reload (normal here)"
 fi
 EOF
 
     if [ $? -eq 0 ]; then
-        print_success "Shiny Server restarted successfully"
+        print_success "App reload triggered (restart.txt)"
     else
-        print_error "Failed to restart Shiny Server"
+        print_error "Could not trigger reload — restart.txt touch failed"
         print_info "Check logs with: ssh $USERNAME@$SERVER 'sudo journalctl -u shiny-server -n 50'"
         exit 1
     fi
@@ -485,11 +436,17 @@ main() {
     # Show summary
     display_summary
 
-    # Ask if user wants to view logs
-    read -p "Would you like to view the application logs? (y/n): " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        show_logs
+    # Ask if user wants to view logs — only when attached to a terminal.
+    # Non-interactive runs (CI, piped stdin, `< /dev/null`) would otherwise
+    # hit EOF here and, under `set -e`, abort with exit 1 *after* a fully
+    # successful deploy — the old "deploy reported failure but actually
+    # worked" gotcha.
+    if [ -t 0 ]; then
+        read -p "Would you like to view the application logs? (y/n): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            show_logs
+        fi
     fi
 }
 

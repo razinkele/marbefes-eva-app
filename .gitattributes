@@ -1,1 +1,5 @@
 BBT1*.zip filter=lfs diff=lfs merge=lfs -text
+
+# Shell scripts must keep LF endings — CRLF breaks the shebang/heredocs both
+# in git-bash and on the Linux deploy target.
+*.sh text eol=lf
