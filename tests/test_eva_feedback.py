@@ -63,3 +63,59 @@ def test_validate_feedback_rejects_bad_type():
 def test_validate_feedback_rejects_overlong_steps():
     msg = eva_feedback.validate_feedback("Title", "Desc", steps="x" * 2001)
     assert "2000" in msg
+
+
+class _FakeResp:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+def test_create_github_issue_returns_none_without_token(monkeypatch):
+    monkeypatch.delenv("MARBEFES_EVA_GITHUB_TOKEN", raising=False)
+    assert eva_feedback.create_github_issue("t", "b", ["bug"]) is None
+
+
+def test_create_github_issue_posts_correct_request(monkeypatch):
+    monkeypatch.setenv("MARBEFES_EVA_GITHUB_TOKEN", "tok123")
+    monkeypatch.setenv("MARBEFES_EVA_GITHUB_REPO", "owner/repo")
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        captured["timeout"] = timeout
+        return _FakeResp(201, {"html_url": "https://gh/issues/7", "number": 7})
+
+    monkeypatch.setattr(eva_feedback.requests, "post", fake_post)
+    result = eva_feedback.create_github_issue("Title", "Body", ["bug", "user-reported"])
+
+    assert result == {"url": "https://gh/issues/7", "number": 7}
+    assert captured["url"] == "https://api.github.com/repos/owner/repo/issues"
+    assert captured["headers"]["Authorization"] == "Bearer tok123"
+    assert captured["headers"]["Accept"] == "application/vnd.github+json"
+    assert captured["json"] == {"title": "Title", "body": "Body",
+                                "labels": ["bug", "user-reported"]}
+    assert captured["timeout"] == 10
+
+
+def test_create_github_issue_returns_none_on_http_error(monkeypatch):
+    monkeypatch.setenv("MARBEFES_EVA_GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(eva_feedback.requests, "post",
+                        lambda *a, **k: _FakeResp(422, {}))
+    assert eva_feedback.create_github_issue("t", "b", []) is None
+
+
+def test_create_github_issue_returns_none_on_exception(monkeypatch):
+    import requests as _rq
+    monkeypatch.setenv("MARBEFES_EVA_GITHUB_TOKEN", "tok")
+
+    def boom(*a, **k):
+        raise _rq.exceptions.ConnectionError("down")
+
+    monkeypatch.setattr(eva_feedback.requests, "post", boom)
+    assert eva_feedback.create_github_issue("t", "b", []) is None

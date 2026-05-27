@@ -70,3 +70,34 @@ def validate_feedback(title: str, description: str,
     if type_ not in LABELS_BY_TYPE:
         return "Invalid report type."
     return None
+
+
+def create_github_issue(title: str, body: str,
+                        labels: list[str] | None = None) -> dict | None:
+    """POST a new GitHub Issue. Returns {'url','number'} or None.
+
+    Returns None immediately if MARBEFES_EVA_GITHUB_TOKEN is unset, and on any
+    non-2xx status or request exception (caller falls back to local-only).
+    """
+    token = os.environ.get("MARBEFES_EVA_GITHUB_TOKEN", "").strip()
+    if not token:
+        logger.info("create_github_issue: no token configured; skipping GitHub")
+        return None
+
+    repo = os.environ.get("MARBEFES_EVA_GITHUB_REPO", DEFAULT_REPO).strip() or DEFAULT_REPO
+    url = f"https://api.github.com/repos/{repo}/issues"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    }
+    payload = {"title": title, "body": body, "labels": list(labels or [])}
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        if resp.status_code in (200, 201):
+            data = resp.json()
+            return {"url": data.get("html_url", ""), "number": data.get("number")}
+        logger.error("create_github_issue: HTTP %s", resp.status_code)
+        return None
+    except Exception as e:
+        logger.error("create_github_issue error: %s", e)
+        return None
