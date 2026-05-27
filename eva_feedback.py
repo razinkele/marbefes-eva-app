@@ -52,3 +52,21 @@ def save_feedback_local(payload: dict, path: str | None = None) -> bool:
     except Exception as e:  # disk full, permission, parent-is-a-file, etc.
         logger.error("save_feedback_local failed: %s", e)
         return False
+
+
+def validate_feedback(title: str, description: str,
+                      type_: str = "general", steps: str = "") -> str | None:
+    """Return an error message string, or None if the input is valid."""
+    if not title or not title.strip():
+        return "Please enter a title."
+    if not description or not description.strip():
+        return "Please enter a description."
+    if len(title) > TITLE_MAX:
+        return f"Title must be {TITLE_MAX} characters or fewer."
+    if len(description) > DESC_MAX:
+        return f"Description must be {DESC_MAX} characters or fewer."
+    if steps and len(steps) > STEPS_MAX:
+        return f"Steps must be {STEPS_MAX} characters or fewer."
+    if type_ not in LABELS_BY_TYPE:
+        return "Invalid report type."
+    return None

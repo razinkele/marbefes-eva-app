@@ -32,3 +32,29 @@ def test_save_feedback_local_returns_false_on_error(tmp_path):
     blocker.write_text("x")
     bad = blocker / "sub" / "fb.ndjson"
     assert eva_feedback.save_feedback_local({"a": 1}, path=str(bad)) is False
+
+
+def test_validate_feedback_accepts_good_input():
+    assert eva_feedback.validate_feedback("Title", "Desc", "bug", "steps") is None
+
+
+def test_validate_feedback_rejects_empty_title():
+    assert eva_feedback.validate_feedback("  ", "Desc") == "Please enter a title."
+
+
+def test_validate_feedback_rejects_empty_description():
+    assert eva_feedback.validate_feedback("Title", "") == "Please enter a description."
+
+
+def test_validate_feedback_rejects_overlong_title():
+    msg = eva_feedback.validate_feedback("x" * 201, "Desc")
+    assert "200" in msg
+
+
+def test_validate_feedback_rejects_overlong_description():
+    msg = eva_feedback.validate_feedback("Title", "x" * 5001)
+    assert "5000" in msg
+
+
+def test_validate_feedback_rejects_bad_type():
+    assert eva_feedback.validate_feedback("Title", "Desc", "nonsense") == "Invalid report type."
