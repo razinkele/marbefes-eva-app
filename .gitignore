@@ -107,3 +107,8 @@ QUICK_DEPLOY_GUIDE.md
 # Environment / secrets
 .env
 *.env
+
+# Large study-area data: the BBT1 Porsangerfjord ZIP is tracked via Git LFS
+# (see .gitattributes). The unzipped copy is the same ~79 MB of shapefiles,
+# so we ignore it to avoid duplicating it in history.
+BBT1 Porsangerfjord/
