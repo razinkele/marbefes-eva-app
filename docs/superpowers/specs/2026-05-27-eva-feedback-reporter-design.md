@@ -105,7 +105,7 @@ No personal data: no uploaded file names, no uploaded data content, no usernames
 
 - GitHub token is a **server-side env var**, never sent to the client.
 - **30-second server-side rate limit** via `reactive.value` (not bypassable from the browser console); Submit button also disabled client-side for UX.
-- Length limits enforced both client-side (`maxlength`) and server-side.
+- Length limits enforced **server-side** in `validate_feedback`; placeholders state the limits as a client hint (Shiny for Python's `input_text`/`input_text_area` expose no native `maxlength`).
 - No user content is ever `eval`'d — all values are treated as strings.
 - Auto-context is aggregate/technical only (no PII).
 - GitHub call has a 10-second timeout; any error falls through to local-only.
@@ -133,3 +133,4 @@ No personal data: no uploaded file names, no uploaded data content, no usernames
 
 - Set `MARBEFES_EVA_GITHUB_TOKEN` (and optionally `MARBEFES_EVA_GITHUB_REPO`) in the laguna shiny-server environment (same place as `MARBEFES_EVA_DATA_PATH`). Without it, the feature degrades gracefully to local-only.
 - The deploy script uploads `*.py`, `scripts/`, `www/`, and select `data/*` files; `eva_feedback.py` ships as a normal module. The `feedback/` log directory is created at runtime and is not touched by deploys.
+- **Local-log writability:** the worker runs as `shiny`, but the app dir is owned `razinka:shiny` mode 755, so `shiny` cannot create `feedback/` there. On laguna, set `MARBEFES_EVA_FEEDBACK_LOG` to a `shiny`-writable path **or** pre-create the dir: `sudo install -d -o shiny -g shiny -m 775 /srv/shiny-server/EVA/feedback`. GitHub Issue creation is unaffected; only the local audit log needs this.

@@ -176,6 +176,11 @@ def test_validate_feedback_rejects_overlong_title():
     assert "200" in msg
 
 
+def test_validate_feedback_rejects_overlong_description():
+    msg = eva_feedback.validate_feedback("Title", "x" * 5001)
+    assert "5000" in msg
+
+
 def test_validate_feedback_rejects_bad_type():
     assert eva_feedback.validate_feedback("Title", "Desc", "nonsense") == "Invalid report type."
 ```
@@ -209,7 +214,7 @@ def validate_feedback(title: str, description: str,
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `micromamba run -n shiny python -m pytest tests/test_eva_feedback.py -k validate -v`
-Expected: PASS (5 passed).
+Expected: PASS (6 passed).
 
 - [ ] **Step 5: Commit**
 
@@ -468,11 +473,20 @@ def test_submit_feedback_creates_issue_when_token_present(tmp_path, monkeypatch)
         "T", "D", type_="general", context={}, log_path=str(log))
     assert result["github_success"] is True
     assert result["github_url"] == "https://gh/9"
+
+
+def test_build_issue_body_includes_steps_only_when_present():
+    bug = eva_feedback._build_issue_body("Desc", "1. do x", {"app_version": "3.8.0"})
+    assert "## Description" in bug
+    assert "## Steps to Reproduce" in bug
+    assert "app_version" in bug          # context embedded in the <details> JSON
+    gen = eva_feedback._build_issue_body("Desc", "", {})
+    assert "## Steps to Reproduce" not in gen
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `micromamba run -n shiny python -m pytest tests/test_eva_feedback.py -k submit -v`
+Run: `micromamba run -n shiny python -m pytest tests/test_eva_feedback.py -k "submit or issue_body" -v`
 Expected: FAIL — `AttributeError: ... has no attribute 'submit_feedback'`.
 
 - [ ] **Step 3: Add `submit_feedback` to `eva_feedback.py`**
@@ -519,8 +533,8 @@ def submit_feedback(title: str, description: str, type_: str = "general",
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `micromamba run -n shiny python -m pytest tests/test_eva_feedback.py -k submit -v`
-Expected: PASS (2 passed).
+Run: `micromamba run -n shiny python -m pytest tests/test_eva_feedback.py -k "submit or issue_body" -v`
+Expected: PASS (3 passed).
 
 - [ ] **Step 5: Commit**
 
@@ -586,13 +600,10 @@ def feedback_modal():
             selected="bug",
         ),
         ui.input_text("feedback_title", "Title",
-                      placeholder="Brief summary of your feedback"),
-        ui.tags.script("document.getElementById('feedback_title')"
-                       "?.setAttribute('maxlength', '200');"),
+                      placeholder="Brief summary (max 200 characters)"),
         ui.input_text_area("feedback_description", "Description",
-                            rows=5, placeholder="Please describe in detail..."),
-        ui.tags.script("document.getElementById('feedback_description')"
-                       "?.setAttribute('maxlength', '5000');"),
+                            rows=5,
+                            placeholder="Please describe in detail... (max 5000 characters)"),
         ui.panel_conditional(
             "input.feedback_type === 'bug'",
             ui.input_text_area("feedback_steps", "Steps to reproduce",
@@ -673,9 +684,15 @@ def register_feedback_handlers(input, output, session) -> None:
                                  type="warning", duration=4)
             return
 
-        context = collect_system_context(input, session)
-        result = submit_feedback(title, description, type_=type_,
-                                 steps=steps, context=context)
+        try:
+            context = collect_system_context(input, session)
+            result = submit_feedback(title, description, type_=type_,
+                                     steps=steps, context=context)
+        except Exception as e:
+            logger.error("feedback submit failed: %s", e)
+            ui.notification_show("Sorry — your feedback could not be sent.",
+                                 type="error", duration=6)
+            return
         last_submit.set(now)
 
         if result["github_success"]:
@@ -821,5 +838,10 @@ Expected: all green.
 - **DRY/YAGNI:** No admin panel, analyzer, or i18n — out of scope per the spec.
 - **Rate limit** is per-session (`reactive.value`); good enough here. The server-side check is the real guard; the client can't bypass it.
 - **No PII** in `collect_system_context` — never add uploaded file names or data content to `extra`.
-- **Deployment:** set `MARBEFES_EVA_GITHUB_TOKEN` (and optionally `MARBEFES_EVA_GITHUB_REPO`) in the laguna shiny-server environment, beside `MARBEFES_EVA_DATA_PATH`. Without it the feature is silently local-only. The `feedback/` dir is created at runtime and untouched by the deploy script.
+- **Client-side maxlength:** Shiny for Python's `ui.input_text`/`input_text_area` (1.6.x) expose **no `maxlength` and no `**kwargs`**, so length is enforced **server-side** in `validate_feedback`. The placeholders state the limits as a hint. (This is a deliberate deviation from the spec's "client-side maxlength," which the API doesn't support natively.)
+- **Deployment:** set `MARBEFES_EVA_GITHUB_TOKEN` (and optionally `MARBEFES_EVA_GITHUB_REPO`) in the laguna shiny-server environment, beside `MARBEFES_EVA_DATA_PATH`. Without it the feature is silently local-only.
+- **⚠ Local-log writability on laguna (important):** the worker runs as the `shiny` user, but `/srv/shiny-server/EVA/` is owned `razinka:shiny` mode 755 — group `shiny` **cannot create `feedback/` there**, so the default log path would fail to write and `save_feedback_local` would return `False` (same class of bug as the documented EVA-GeoPackage permission gotcha). On the server, do **one** of:
+  - set `MARBEFES_EVA_FEEDBACK_LOG` to a `shiny`-writable path, or
+  - pre-create a writable dir: `sudo install -d -o shiny -g shiny -m 775 /srv/shiny-server/EVA/feedback`.
+  GitHub Issue creation is unaffected; only the local audit log needs this. Locally (running as your own user) the default path works without any setup.
 - **`feature_count`/`selected_area`:** the `extra` dict in `collect_system_context` is the injection point if you later want EVA's loaded-dataset feature count or selected BBT in the context — pass them from a reactive in `register_feedback_handlers`. Not required for the core feature.
