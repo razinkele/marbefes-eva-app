@@ -101,3 +101,35 @@ def create_github_issue(title: str, body: str,
     except Exception as e:
         logger.error("create_github_issue error: %s", e)
         return None
+
+
+def collect_system_context(input, session=None, extra: dict | None = None) -> dict:
+    """Snapshot non-PII technical context for a feedback submission.
+
+    Every field is gathered defensively: a missing input or any error yields
+    "unknown" rather than raising. `extra` lets the caller inject app-specific
+    fields (e.g. dataset_loaded, feature_count, selected_area).
+    """
+    def safe(getter, default="unknown"):
+        try:
+            val = getter()
+            return default if val in (None, "") else val
+        except Exception:
+            return default
+
+    try:
+        import version
+        app_version = version.get_version()
+    except Exception:
+        app_version = "unknown"
+
+    ctx = {
+        "app_version": app_version,
+        "current_tab": safe(lambda: str(input.navigation())),
+        "browser_info": safe(lambda: str(input.fb_browser_info())),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc)
+                            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    if extra:
+        ctx.update(extra)
+    return ctx

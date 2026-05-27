@@ -119,3 +119,32 @@ def test_create_github_issue_returns_none_on_exception(monkeypatch):
 
     monkeypatch.setattr(eva_feedback.requests, "post", boom)
     assert eva_feedback.create_github_issue("t", "b", []) is None
+
+
+class _FakeInput:
+    """Mimics Shiny inputs: input.navigation() etc. are callables."""
+    def __init__(self, **values):
+        for name, val in values.items():
+            setattr(self, name, val)
+
+
+def test_collect_system_context_has_core_keys():
+    inp = _FakeInput(navigation=lambda: "nav_eva", fb_browser_info=lambda: "UA/1.0")
+    ctx = eva_feedback.collect_system_context(inp)
+    assert ctx["current_tab"] == "nav_eva"
+    assert ctx["browser_info"] == "UA/1.0"
+    assert "app_version" in ctx
+    assert ctx["timestamp"].endswith("Z")
+
+
+def test_collect_system_context_defaults_when_inputs_missing():
+    inp = _FakeInput()  # no navigation / fb_browser_info attributes
+    ctx = eva_feedback.collect_system_context(inp)
+    assert ctx["current_tab"] == "unknown"
+    assert ctx["browser_info"] == "unknown"
+
+
+def test_collect_system_context_merges_extra():
+    inp = _FakeInput(navigation=lambda: "nav_home")
+    ctx = eva_feedback.collect_system_context(inp, extra={"feature_count": 42})
+    assert ctx["feature_count"] == 42
