@@ -62,14 +62,14 @@ def validate_feedback(title: str, description: str,
         return "Please enter a title."
     if not description or not description.strip():
         return "Please enter a description."
+    if type_ not in LABELS_BY_TYPE:
+        return "Invalid report type."
     if len(title) > TITLE_MAX:
         return f"Title must be {TITLE_MAX} characters or fewer."
     if len(description) > DESC_MAX:
         return f"Description must be {DESC_MAX} characters or fewer."
     if steps and len(steps) > STEPS_MAX:
         return f"Steps must be {STEPS_MAX} characters or fewer."
-    if type_ not in LABELS_BY_TYPE:
-        return "Invalid report type."
     return None
 
 

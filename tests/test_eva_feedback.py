@@ -208,3 +208,8 @@ def test_feedback_modal_contains_field_ids():
     # Shiny escapes single quotes in data-display-if; check structure + value separately
     assert "data-display-if" in html
     assert "feedback_type" in html and "'bug'" in html.replace("&apos;", "'")
+
+
+def test_validate_feedback_reports_bad_type_before_length():
+    msg = eva_feedback.validate_feedback("x" * 250, "Desc", "nonsense")
+    assert msg == "Invalid report type."
