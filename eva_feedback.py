@@ -171,6 +171,12 @@ def submit_feedback(title: str, description: str, type_: str = "general",
     github_success = gh is not None
     github_url = gh["url"] if gh else None
 
+    # Append an audit-completion entry once the GitHub URL is known, so the
+    # on-disk log can be reconciled with what was actually published.
+    if github_success and local_success:
+        completion = dict(payload, github_url=github_url)
+        save_feedback_local(completion, path=log_path)
+
     return {
         "local_success": local_success,
         "github_success": github_success,

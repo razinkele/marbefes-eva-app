@@ -176,6 +176,12 @@ def test_submit_feedback_creates_issue_when_token_present(tmp_path, monkeypatch)
         "T", "D", type_="general", context={}, log_path=str(log))
     assert result["github_success"] is True
     assert result["github_url"] == "https://gh/9"
+    # Log should have two entries: the initial save (github_url=None) and
+    # the audit-completion line with the resolved URL.
+    entries = [json.loads(l) for l in log.read_text(encoding="utf-8").splitlines()]
+    assert len(entries) == 2
+    assert entries[0]["github_url"] is None
+    assert entries[1]["github_url"] == "https://gh/9"
 
 
 def test_build_issue_body_includes_steps_only_when_present():
