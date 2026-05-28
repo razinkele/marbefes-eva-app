@@ -28,6 +28,7 @@ import pa_calculations
 import pa_export
 import pa_docx
 import eva_visualizations
+import eva_feedback
 import eva_map
 import threading as _threading
 
@@ -134,6 +135,7 @@ logging.basicConfig(
 # logger defined at module top for use by the EVA cache prewarm thread
 
 def server(input, output, session):
+    eva_feedback.register_feedback_handlers(input, output, session)
 
     # Reactive values for storing data
     uploaded_data = reactive.Value(None)

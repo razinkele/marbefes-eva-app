@@ -116,3 +116,6 @@ BBT1 Porsangerfjord.zip
 BBT6 Gulf of Gdansk.zip
 aq_ev_27_06_2025.zip
 data/gadm_cache/ADM0_GRC.gpkg
+
+# User feedback log (runtime-generated, may contain submissions)
+feedback/

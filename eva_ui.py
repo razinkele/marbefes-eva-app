@@ -765,6 +765,9 @@ app_ui = ui.page_fluid(
             # Right-side action buttons
             ui.div(
                 ui.HTML('''
+                <button class="header-btn" onclick="Shiny.setInputValue('show_feedback_modal', Math.random()); return false;">
+                  <i class="bi bi-chat-dots"></i> Feedback
+                </button>
                 <button class="header-btn" onclick="openPanel('help-panel')">
                   <i class="bi bi-question-circle"></i> Help
                 </button>
