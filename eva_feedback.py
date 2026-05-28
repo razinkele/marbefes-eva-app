@@ -109,6 +109,9 @@ def collect_system_context(input, session=None, extra: dict | None = None) -> di
     Every field is gathered defensively: a missing input or any error yields
     "unknown" rather than raising. `extra` lets the caller inject app-specific
     fields (e.g. dataset_loaded, feature_count, selected_area).
+
+    `session` is reserved for future use (e.g. attaching session.id to
+    diagnostic context) and is not read by the current implementation.
     """
     def safe(getter, default="unknown"):
         try:
