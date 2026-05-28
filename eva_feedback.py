@@ -11,6 +11,7 @@ import datetime
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -238,7 +239,6 @@ def register_feedback_handlers(input, output, session) -> None:
     @reactive.effect
     @reactive.event(input.feedback_submit)
     def _on_feedback_submit():
-        import time
         title = input.feedback_title()
         description = input.feedback_description()
         type_ = input.feedback_type()
@@ -267,6 +267,7 @@ def register_feedback_handlers(input, output, session) -> None:
             logger.error("feedback submit failed: %s", e)
             ui.notification_show("Sorry — your feedback could not be sent.",
                                  type="error", duration=6)
+            # Leave the modal open so the user can retry without re-opening.
             return
         last_submit.set(now)
 
