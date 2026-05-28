@@ -148,3 +148,40 @@ def test_collect_system_context_merges_extra():
     inp = _FakeInput(navigation=lambda: "nav_home")
     ctx = eva_feedback.collect_system_context(inp, extra={"feature_count": 42})
     assert ctx["feature_count"] == 42
+
+
+def test_submit_feedback_local_only_without_token(tmp_path, monkeypatch):
+    monkeypatch.delenv("MARBEFES_EVA_GITHUB_TOKEN", raising=False)
+    log = tmp_path / "fb.ndjson"
+    result = eva_feedback.submit_feedback(
+        "Title", "Desc", type_="bug", steps="do x",
+        context={"app_version": "3.8.0"}, log_path=str(log))
+    assert result["local_success"] is True
+    assert result["github_success"] is False
+    assert result["github_url"] is None
+    entry = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["title"] == "Title"
+    assert entry["type"] == "bug"
+    assert entry["labels"] == ["bug", "user-reported"]
+    assert entry["app_version"] == "3.8.0"
+
+
+def test_submit_feedback_creates_issue_when_token_present(tmp_path, monkeypatch):
+    monkeypatch.setenv("MARBEFES_EVA_GITHUB_TOKEN", "tok")
+    monkeypatch.setattr(
+        eva_feedback, "create_github_issue",
+        lambda title, body, labels: {"url": "https://gh/9", "number": 9})
+    log = tmp_path / "fb.ndjson"
+    result = eva_feedback.submit_feedback(
+        "T", "D", type_="general", context={}, log_path=str(log))
+    assert result["github_success"] is True
+    assert result["github_url"] == "https://gh/9"
+
+
+def test_build_issue_body_includes_steps_only_when_present():
+    bug = eva_feedback._build_issue_body("Desc", "1. do x", {"app_version": "3.8.0"})
+    assert "## Description" in bug
+    assert "## Steps to Reproduce" in bug
+    assert "app_version" in bug          # context embedded in the <details> JSON
+    gen = eva_feedback._build_issue_body("Desc", "", {})
+    assert "## Steps to Reproduce" not in gen

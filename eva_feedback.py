@@ -136,3 +136,42 @@ def collect_system_context(input, session=None, extra: dict | None = None) -> di
     if extra:
         ctx.update(extra)
     return ctx
+
+
+def _build_issue_body(description: str, steps: str, context: dict) -> str:
+    parts = [f"## Description\n\n{description}"]
+    if steps and steps.strip():
+        parts.append(f"\n\n## Steps to Reproduce\n\n{steps}")
+    ctx_json = json.dumps(context or {}, indent=2, ensure_ascii=False)
+    parts.append("\n\n<details>\n<summary>System Context</summary>\n\n"
+                 f"```json\n{ctx_json}\n```\n\n</details>")
+    return "".join(parts)
+
+
+def submit_feedback(title: str, description: str, type_: str = "general",
+                    steps: str = "", context: dict | None = None,
+                    log_path: str | None = None) -> dict:
+    """Save locally (always) and attempt a GitHub Issue. Returns a result dict."""
+    context = context or {}
+    labels = LABELS_BY_TYPE.get(type_, LABELS_BY_TYPE["general"])
+
+    payload = {
+        "title": title,
+        "description": description,
+        "type": type_,
+        "steps": steps,
+        "labels": labels,
+        "github_url": None,
+        **context,
+    }
+    local_success = save_feedback_local(payload, path=log_path)
+
+    gh = create_github_issue(title, _build_issue_body(description, steps, context), labels)
+    github_success = gh is not None
+    github_url = gh["url"] if gh else None
+
+    return {
+        "local_success": local_success,
+        "github_success": github_success,
+        "github_url": github_url,
+    }
