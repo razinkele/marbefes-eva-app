@@ -185,3 +185,18 @@ def test_build_issue_body_includes_steps_only_when_present():
     assert "app_version" in bug          # context embedded in the <details> JSON
     gen = eva_feedback._build_issue_body("Desc", "", {})
     assert "## Steps to Reproduce" not in gen
+
+
+def test_feedback_button_html_sets_input():
+    html = str(eva_feedback.feedback_button())
+    assert "show_feedback_modal" in html
+    assert "Feedback" in html
+
+
+def test_feedback_modal_contains_field_ids():
+    html = str(eva_feedback.feedback_modal())
+    for marker in ("feedback_type", "feedback_title", "feedback_description",
+                   "feedback_steps", "feedback_submit", "fb_browser_info"):
+        assert marker in html
+    # bug-only steps field is gated client-side on the radio value
+    assert "feedback_type === 'bug'" in html

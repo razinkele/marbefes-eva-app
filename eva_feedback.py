@@ -175,3 +175,57 @@ def submit_feedback(title: str, description: str, type_: str = "general",
         "github_success": github_success,
         "github_url": github_url,
     }
+
+
+def feedback_button():
+    """HTML header button matching EVA's existing header-btn style.
+
+    Sets the Shiny input `show_feedback_modal` so the server can open the modal.
+    """
+    return ui.HTML(
+        '<button class="header-btn" '
+        "onclick=\"Shiny.setInputValue('show_feedback_modal', Math.random()); return false;\">"
+        '<i class="bi bi-chat-dots"></i> Feedback</button>'
+    )
+
+
+def feedback_modal():
+    """Build the feedback modal dialog."""
+    return ui.modal(
+        ui.input_radio_buttons(
+            "feedback_type", "Report type",
+            {"bug": "Bug Report", "suggestion": "Improvement Suggestion",
+             "general": "General Feedback"},
+            selected="bug",
+        ),
+        ui.input_text("feedback_title", "Title",
+                      placeholder="Brief summary (max 200 characters)"),
+        ui.input_text_area("feedback_description", "Description",
+                            rows=5,
+                            placeholder="Please describe in detail... (max 5000 characters)"),
+        ui.HTML(
+            "<div data-display-if=\"input.feedback_type === 'bug'\" data-ns-prefix=\"\">"
+            '<div class="shiny-input-textarea form-group shiny-input-container">'
+            '<label class="control-label" id="feedback_steps-label" for="feedback_steps">'
+            "Steps to reproduce</label>"
+            '<textarea id="feedback_steps" class="form-control" style="width:100%;" '
+            'placeholder="1. Go to...&#10;2. Click...&#10;3. See error" '
+            'rows="3" data-update-on="change"></textarea>'
+            "</div></div>"
+        ),
+        ui.tags.details(
+            ui.tags.summary("System information"),
+            ui.tags.small("Version, current tab, browser, and timestamp are "
+                          "attached automatically. No personal data is collected."),
+        ),
+        ui.tags.script(
+            "Shiny.setInputValue('fb_browser_info', navigator.userAgent);"
+        ),
+        title="Send Feedback",
+        easy_close=False,
+        footer=ui.TagList(
+            ui.input_action_button("feedback_submit", "Submit Feedback",
+                                   class_="btn-primary"),
+            ui.modal_button("Cancel"),
+        ),
+    )
