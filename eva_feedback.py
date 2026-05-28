@@ -224,3 +224,59 @@ def feedback_modal():
             ui.modal_button("Cancel"),
         ),
     )
+
+
+def register_feedback_handlers(input, output, session) -> None:
+    """Wire the feedback modal: open, submit (validate + rate-limit), notify."""
+    last_submit = reactive.value(0.0)
+
+    @reactive.effect
+    @reactive.event(input.show_feedback_modal)
+    def _open_feedback_modal():
+        ui.modal_show(feedback_modal())
+
+    @reactive.effect
+    @reactive.event(input.feedback_submit)
+    def _on_feedback_submit():
+        import time
+        title = input.feedback_title()
+        description = input.feedback_description()
+        type_ = input.feedback_type()
+        # feedback_steps only exists in the DOM for bug reports
+        try:
+            steps = input.feedback_steps() or ""
+        except Exception:
+            steps = ""
+
+        err = validate_feedback(title, description, type_, steps)
+        if err:
+            ui.notification_show(err, type="warning", duration=5)
+            return
+
+        now = time.time()
+        if now - last_submit() < RATE_LIMIT_SECONDS:
+            ui.notification_show("Please wait a moment before submitting again.",
+                                 type="warning", duration=4)
+            return
+
+        try:
+            context = collect_system_context(input, session)
+            result = submit_feedback(title, description, type_=type_,
+                                     steps=steps, context=context)
+        except Exception as e:
+            logger.error("feedback submit failed: %s", e)
+            ui.notification_show("Sorry — your feedback could not be sent.",
+                                 type="error", duration=6)
+            return
+        last_submit.set(now)
+
+        if result["github_success"]:
+            ui.notification_show("Thank you! Your feedback has been submitted.",
+                                 type="message", duration=5)
+        elif result["local_success"]:
+            ui.notification_show("Thank you! Your feedback has been saved.",
+                                 type="message", duration=5)
+        else:
+            ui.notification_show("Sorry — your feedback could not be saved.",
+                                 type="error", duration=6)
+        ui.modal_remove()
