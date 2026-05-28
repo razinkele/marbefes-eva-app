@@ -199,4 +199,6 @@ def test_feedback_modal_contains_field_ids():
                    "feedback_steps", "feedback_submit", "fb_browser_info"):
         assert marker in html
     # bug-only steps field is gated client-side on the radio value
-    assert "feedback_type === 'bug'" in html
+    # Shiny escapes single quotes in data-display-if; check structure + value separately
+    assert "data-display-if" in html
+    assert "feedback_type" in html and "'bug'" in html.replace("&apos;", "'")

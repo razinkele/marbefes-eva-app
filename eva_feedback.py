@@ -203,15 +203,10 @@ def feedback_modal():
         ui.input_text_area("feedback_description", "Description",
                             rows=5,
                             placeholder="Please describe in detail... (max 5000 characters)"),
-        ui.HTML(
-            "<div data-display-if=\"input.feedback_type === 'bug'\" data-ns-prefix=\"\">"
-            '<div class="shiny-input-textarea form-group shiny-input-container">'
-            '<label class="control-label" id="feedback_steps-label" for="feedback_steps">'
-            "Steps to reproduce</label>"
-            '<textarea id="feedback_steps" class="form-control" style="width:100%;" '
-            'placeholder="1. Go to...&#10;2. Click...&#10;3. See error" '
-            'rows="3" data-update-on="change"></textarea>'
-            "</div></div>"
+        ui.panel_conditional(
+            "input.feedback_type === 'bug'",
+            ui.input_text_area("feedback_steps", "Steps to reproduce",
+                               rows=3, placeholder="1. Go to...\n2. Click...\n3. See error"),
         ),
         ui.tags.details(
             ui.tags.summary("System information"),
