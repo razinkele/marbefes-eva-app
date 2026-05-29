@@ -214,6 +214,15 @@ find . -user $USERNAME -type f -exec chmod 644 {} \; 2>/dev/null
 # Make venv scripts executable
 find venv/bin -type f -exec chmod 755 {} \; 2>/dev/null
 
+# The feedback/ log dir must stay group-writable so the shiny worker (group
+# shiny) can append the local audit log. The broad chmod 755 above strips
+# the needed g+w, so explicitly restore it here. Idempotent; no-op if the
+# dir does not exist yet.
+if [ -d feedback ]; then
+    chgrp shiny feedback 2>/dev/null || true
+    chmod 775 feedback
+fi
+
 echo "Permissions set successfully"
 EOF
 
